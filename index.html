@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="會議助理">
+<meta name="theme-color" content="#1E1B4B">
+<title>Conference Companion</title>
+<link rel="apple-touch-icon" sizes="192x192" href="icon.png">
+<link rel="manifest" href="manifest.json">
+
+<!-- ★ 會議設定檔 — 每次換會議只改這個檔案 -->
+<script src="conference.js"></script>
+
+<!-- Google Identity Services -->
+<script src="https://accounts.google.com/gsi/client" async></script>
+<!-- React 18 + Babel -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#FAFAF8;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+  ::-webkit-scrollbar{display:none}
+  input,button,textarea,select{font-family:inherit;-webkit-appearance:none}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ─── CONFIG ── 填入您的 Google Client ID ────────────────────────────────────────
+const GOOGLE_CLIENT_ID = "609511324758-dhgjq9r8v8jr4s4ktfm3eb83ani6ea2n.apps.googleusercontent.com";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents";
+
+// ─── 讀取會議設定 ──────────────────────────────────────────────────────────────
+const C_CFG = window.CONFERENCE_CONFIG;
+const SESSIONS     = C_CFG.sessions;
+const DAYS         = C_CFG.days;
+const CHECKPOINTS  = C_CFG.checkpoints;
+
+// ─── LOCAL STORAGE（以會議 Drive 資料夾名稱為 key，不同會議互不干擾）──────────
+const _pfx = C_CFG.driveFolderName.toLowerCase();
+const NK = `${_pfx}_notes`;
+const MK = `${_pfx}_media`;
+const UK = `${_pfx}_upd`;
+const load    = k => { try { return JSON.parse(localStorage.getItem(k) || "{}"); } catch { return {}; } };
+const persist = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+// ─── SESSION INDEX ─────────────────────────────────────────────────────────────
+const BADGE = {
+  edu:  { bg: "#EEF0FD", c: "#3730A3" },
+  sym:  { bg: "#ECFDF5", c: "#065F46" },
+  con:  { bg: "#EFF6FF", c: "#1E40AF" },
+  int:  { bg: "#FFFBEB", c: "#92400E" },
+  pl:   { bg: "#FFF1EE", c: "#7C2D12" },
+  corp: { bg: "#F5F5F4", c: "#44403C" },
+  soc:  { bg: "#FDF2F8", c: "#701A75" },
+};
+
+function buildIdx() {
+  const idx = {};
+  for (const [day, blocks] of Object.entries(SESSIONS))
+    for (const bl of blocks)
+      if (bl.items) for (const it of bl.items)
+        idx[it.id] = { title: it.title, day: DAYS[day], time: bl.time };
+  return idx;
+}
+
+// ─── DRIVE API ─────────────────────────────────────────────────────────────────
+async function driveGet(token, path, params = "") {
+  const r = await fetch(`https://www.googleapis.com/drive/v3/${path}${params}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!r.ok) throw new Error(`Drive ${path} ${r.status}`);
+  return r.json();
+}
+
+async function findFile(token, name, parentId) {
+  const safe = name.replace(/'/g, "\\'");
+  let q = `name='${safe}' and trashed=false`;
+  if (parentId) q += ` and '${parentId}' in parents`;
+  const d = await driveGet(token, "files", `?q=${encodeURIComponent(q)}&fields=files(id,name,webViewLink)`);
+  return d.files?.[0] || null;
+}
+
+async function createFolder(token, name, parentId) {
+  const meta = { name, mimeType: "application/vnd.google-apps.folder" };
+  if (parentId) meta.parents = [parentId];
+  const r = await fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(meta)
+  });
+  if (!r.ok) throw new Error("createFolder failed");
+  return r.json();
+}
+
+async function getOrCreateFolder(token, name, parentId) {
+  return (await findFile(token, name, parentId)) || (await createFolder(token, name, parentId));
+}
+
+async function readJsonFile(token, fileId) {
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function writeJsonFile(token, name, data, parentId, existingId) {
+  const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+  const metaObj = { name, mimeType: "application/json" };
+  if (parentId && !existingId) metaObj.parents = [parentId];
+  const form = new FormData();
+  form.append("metadata", new Blob([JSON.stringify(metaObj)], { type: "application/json" }));
+  form.append("file", blob);
+  const url = existingId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
+    : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+  const r = await fetch(url, {
+    method: existingId ? "PATCH" : "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form
+  });
+  if (!r.ok) throw new Error("writeJsonFile failed");
+  return r.json();
+}
+
+async function uploadMediaFile(token, file, sessionTitle) {
+  // 每個大會一個獨立頂層資料夾（e.g. ESHG2026）
+  const rootFolder = await getOrCreateFolder(token, C_CFG.driveFolderName, null);
+  const folderName = sessionTitle.replace(/[★\*\/\\:]/g, "").trim().substring(0, 40);
+  const sessionFolder = await getOrCreateFolder(token, folderName, rootFolder.id);
+  const ts = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" }).replace(":", "");
+  const meta = JSON.stringify({ name: `${ts}_${file.name}`, parents: [sessionFolder.id] });
+  const form = new FormData();
+  form.append("metadata", new Blob([meta], { type: "application/json" }));
+  form.append("file", file);
+  const r = await fetch(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,name",
+    { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
+  );
+  if (!r.ok) throw new Error("Upload failed");
+  const d = await r.json();
+  await fetch(`https://www.googleapis.com/drive/v3/files/${d.id}/permissions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "reader", type: "anyone" })
+  });
+  return d;
+}
+
+// ─── GOOGLE DOCS EXPORT ────────────────────────────────────────────────────────
+async function exportToGoogleDoc(token, notes, media) {
+  const docTitle = `${C_CFG.name} 會議筆記・${C_CFG.location.split("，")[0]}`;
+  const r = await fetch("https://docs.googleapis.com/v1/documents", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ title: docTitle })
+  });
+  if (!r.ok) throw new Error("無法建立 Google Doc");
+  const doc = await r.json();
+  const docId = doc.documentId;
+
+  const lines = [];
+  lines.push(`${C_CFG.name} 會議筆記`);
+  lines.push(C_CFG.subtitle);
+  lines.push(`匯出日期：${new Date().toLocaleDateString("zh-TW", { year: "numeric", month: "long", day: "numeric" })}`);
+  lines.push("");
+
+  for (const [day, blocks] of Object.entries(SESSIONS)) {
+    let dayHasContent = false;
+    for (const bl of blocks) {
+      if (!bl.items) continue;
+      for (const it of bl.items) {
+        if (notes[it.id] || media[it.id]) { dayHasContent = true; break; }
+      }
+      if (dayHasContent) break;
+    }
+    if (!dayHasContent) continue;
+
+    lines.push("═══════════════════════════════════");
+    lines.push(DAYS[day]);
+    lines.push("═══════════════════════════════════");
+    lines.push("");
+
+    for (const bl of blocks) {
+      if (!bl.items) continue;
+      for (const it of bl.items) {
+        const note = notes[it.id];
+        const med  = media[it.id];
+        if (!note && !med) continue;
+        lines.push(`▌ ${bl.time}  ${it.title}`);
+        if (it.speakers?.length) lines.push(`   講者：${it.speakers.join(" / ")}`);
+        if (note) { lines.push(""); lines.push("📝 筆記："); lines.push(note); }
+        if (med?.driveLinks?.length) {
+          lines.push(""); lines.push("📷 照片 / 資料：");
+          for (const lk of med.driveLinks) lines.push(`   ${lk.label}：${lk.url}`);
+        }
+        if (med?.videoLinks?.length) {
+          lines.push(""); lines.push("🎥 影片：");
+          for (const vl of med.videoLinks) lines.push(`   ${vl.label}：${vl.url}`);
+        }
+        lines.push("");
+      }
+    }
+  }
+
+  const text = lines.join("\n");
+  await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text } }] })
+  });
+
+  return `https://docs.google.com/document/d/${docId}/edit`;
+}
+
+// ─── EXPORT HTML ───────────────────────────────────────────────────────────────
+function generateExportHTML(notes, media) {
+  const now = new Date().toLocaleDateString("zh-TW", { year: "numeric", month: "long", day: "numeric" });
+  const sections = [];
+  for (const [day, blocks] of Object.entries(SESSIONS)) {
+    const dayItems = [];
+    for (const bl of blocks) {
+      if (!bl.items) continue;
+      for (const it of bl.items) {
+        const note = notes[it.id];
+        const med  = media[it.id] || {};
+        if (!note && !med.driveLinks?.length && !med.videoLinks?.length) continue;
+        const bc = BADGE[it.b] || BADGE.corp;
+        let h = `<div class="si"><div class="sh"><span class="badge" style="background:${bc.bg};color:${bc.c}">${it.l}</span><div><div class="stl">${bl.time}</div><div class="stt">${it.title}</div>${it.speakers?.length ? `<div class="spk">${it.speakers.join(" · ")}</div>` : ""}</div></div>`;
+        if (note) h += `<div class="nb"><div class="nl">📝 筆記</div><div class="nt">${note.replace(/\n/g, "<br>")}</div></div>`;
+        if (med.driveLinks?.length) { h += `<div class="mb"><div class="nl">📷 Drive 照片</div>`; for (const lk of med.driveLinks) h += `<a class="dl" href="${lk.url}" target="_blank">📷 ${lk.label}</a>`; h += `</div>`; }
+        if (med.videoLinks?.length) { h += `<div class="mb"><div class="nl">🎬 影片</div>`; for (const vl of med.videoLinks) h += `<a class="dl" href="${vl.url}" target="_blank">▶ ${vl.label}</a>`; h += `</div>`; }
+        h += `</div>`;
+        dayItems.push(h);
+      }
+    }
+    if (dayItems.length) sections.push(`<div class="ds"><div class="dh">${DAYS[day]}</div>${dayItems.join("")}</div>`);
+  }
+  const noteCount  = Object.keys(notes).length;
+  const mediaCount = Object.values(media).reduce((a, m) => a + (m.driveLinks?.length || 0) + (m.videoLinks?.length || 0), 0);
+  return `<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${C_CFG.name} 會議筆記</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#FAFAF8;color:#1C1917}
+.cov{background:linear-gradient(135deg,#1E1B4B,#4338CA);color:#fff;padding:52px 36px 44px}.ct{font-size:34px;font-weight:700;margin-bottom:6px}
+.cs{font-size:14px;opacity:.7;margin-bottom:20px}.cm{font-size:12px;opacity:.5;line-height:2}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:720px;margin:32px auto 0;padding:0 20px}
+.stat{background:#fff;border:1px solid #E7E5E4;border-radius:10px;padding:14px;text-align:center}
+.sn{font-size:26px;font-weight:700;color:#312E81}.sl{font-size:11px;color:#78716C;margin-top:2px}
+.con{max-width:720px;margin:0 auto;padding:32px 20px 80px}
+.ds{margin-bottom:36px}.dh{font-size:18px;font-weight:700;color:#312E81;padding:10px 0;border-bottom:2px solid #312E81;margin-bottom:16px}
+.si{background:#fff;border:1px solid #E7E5E4;border-radius:12px;padding:18px;margin-bottom:12px;page-break-inside:avoid}
+.sh{display:flex;gap:10px;align-items:flex-start;margin-bottom:12px}.badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;flex-shrink:0;margin-top:2px}
+.stl{font-size:10px;color:#A8A29E}.stt{font-size:14px;font-weight:600;color:#1C1917;line-height:1.4}.spk{font-size:11px;color:#78716C;margin-top:3px}
+.nb{background:#FAFAF8;border-left:3px solid #312E81;border-radius:0 6px 6px 0;padding:10px 12px;margin-bottom:8px}
+.nl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A8A29E;margin-bottom:5px}
+.nt{font-size:13px;color:#292524;line-height:1.7;white-space:pre-wrap}.mb{margin-bottom:8px}
+.dl{display:inline-flex;background:#EEF0FD;color:#3730A3;border-radius:6px;padding:5px 10px;font-size:12px;text-decoration:none;margin:2px}
+.footer{text-align:center;padding:24px;font-size:11px;color:#A8A29E;border-top:1px solid #E7E5E4}
+@media print{.cov{-webkit-print-color-adjust:exact;print-color-adjust:exact}.si{break-inside:avoid}}
+</style></head><body>
+<div class="cov"><div class="ct">${C_CFG.name}</div><div class="cs">${C_CFG.subtitle}</div>
+<div class="cm">📅 ${C_CFG.dates}　📍 ${C_CFG.venue?.split("，")[0] || ""}　🗓 匯出於 ${now}</div></div>
+<div class="stats"><div class="stat"><div class="sn">${noteCount}</div><div class="sl">則文字筆記</div></div><div class="stat"><div class="sn">${mediaCount}</div><div class="sl">個媒體連結</div></div><div class="stat"><div class="sn">${sections.length}</div><div class="sl">天有記錄</div></div></div>
+<div class="con">${sections.length ? sections.join("") : `<div style="text-align:center;padding:60px;color:#bbb">📭 尚無筆記</div>`}</div>
+<div class="footer">${C_CFG.name} · Conference Companion · ${now}</div>
+</body></html>`;
+}
+
+// ─── MAIN APP ──────────────────────────────────────────────────────────────────
+function App() {
+  const dayKeys = Object.keys(SESSIONS);
+  const [curDay, setCurDay]         = useState(dayKeys[0]);
+  const [curFilter, setFilter]      = useState("all");
+  const [curView, setView]          = useState("schedule");
+  const [notes, setNotes]           = useState(load(NK));
+  const [media, setMedia]           = useState(load(MK));
+  const [updates, setUpdates]       = useState(load(UK));
+  const [openCards, setOpenCards]   = useState({});
+  const [draftNotes, setDraftNotes] = useState({});
+  const [draftMedia, setDraftMedia] = useState({});
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [hasDot, setHasDot]         = useState(false);
+  const [exportDone, setExportDone] = useState(false);
+  const [exportingDoc, setExportingDoc] = useState(false);
+  const [uploading, setUploading]   = useState({});
+
+  // Google auth
+  const [accessToken, setAccessToken] = useState(null);
+  const [userEmail, setUserEmail]     = useState(null);
+  const [tokenClient, setTokenClient] = useState(null);
+  const [syncStatus, setSyncStatus]   = useState("idle");
+
+  // Stable refs for Drive IDs (avoids stale closures)
+  const driveRootIdRef = useRef(null);
+  const driveFileIdRef = useRef(null);
+  const accessTokenRef = useRef(null);
+
+  const startDate = new Date(C_CFG.startDate);
+  const daysLeft  = Math.ceil((startDate - new Date()) / 86400000);
+
+  const CC = {
+    acc: "#4338CA", accL: "#EEF0FD", teal: "#065F46", tealL: "#ECFDF5",
+    blue: "#1E40AF", blueL: "#EFF6FF", amb: "#92400E", ambL: "#FFFBEB",
+    grn: "#14532D", grnL: "#F0FDF4", red: "#7F1D1D", redL: "#FEF2F2",
+    border: "1px solid #E7E5E4", muted: "#78716C",
+  };
+
+  // ── Google Identity Services ───────────────────────────────────────────────
+  useEffect(() => {
+    const init = () => {
+      if (!window.google?.accounts?.oauth2) return;
+      const tc = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: DRIVE_SCOPE,
+        callback: async (resp) => {
+          if (resp.error) { console.error("OAuth:", resp.error); return; }
+          accessTokenRef.current = resp.access_token;
+          setAccessToken(resp.access_token);
+          try {
+            const r = await fetch("https://www.googleapis.com/oauth2/v1/userinfo", {
+              headers: { Authorization: `Bearer ${resp.access_token}` }
+            });
+            const u = await r.json();
+            setUserEmail(u.email);
+          } catch {}
+          await loadNotesFromDrive(resp.access_token);
+        }
+      });
+      setTokenClient(tc);
+    };
+    if (window.google?.accounts?.oauth2) init();
+    else {
+      const t = setInterval(() => { if (window.google?.accounts?.oauth2) { init(); clearInterval(t); } }, 300);
+      return () => clearInterval(t);
+    }
+  }, []);
+
+  // ── Drive: load notes ──────────────────────────────────────────────────────
+  const loadNotesFromDrive = async (token) => {
+    setSyncStatus("syncing");
+    try {
+      const rootFolder = await getOrCreateFolder(token, C_CFG.driveFolderName, null);
+      driveRootIdRef.current = rootFolder.id;
+      const file = await findFile(token, C_CFG.notesFileName, rootFolder.id);
+      if (file) {
+        driveFileIdRef.current = file.id;
+        const data = await readJsonFile(token, file.id);
+        if (data?.notes) { persist(NK, data.notes); setNotes(data.notes); }
+        if (data?.media) { persist(MK, data.media); setMedia(data.media); }
+      }
+      setSyncStatus("done");
+    } catch (e) { console.error("Drive load:", e); setSyncStatus("error"); }
+  };
+
+  // ── Drive: save notes ──────────────────────────────────────────────────────
+  const saveToDrive = useCallback(async (newNotes, newMedia) => {
+    if (!accessTokenRef.current || !driveRootIdRef.current) return;
+    setSyncStatus("syncing");
+    try {
+      const data = { notes: newNotes, media: newMedia, conference: C_CFG.name, savedAt: new Date().toISOString() };
+      const result = await writeJsonFile(
+        accessTokenRef.current, C_CFG.notesFileName, data,
+        driveRootIdRef.current, driveFileIdRef.current
+      );
+      if (!driveFileIdRef.current && result?.id) driveFileIdRef.current = result.id;
+      setSyncStatus("done");
+    } catch (e) { console.error("Drive save:", e); setSyncStatus("error"); }
+  }, []);
+
+  // ── Note & media save ──────────────────────────────────────────────────────
+  const saveNoteF = (id, txt) => {
+    const n = { ...load(NK) };
+    if (txt.trim()) n[id] = txt; else delete n[id];
+    persist(NK, n); setNotes(n);
+    saveToDrive(n, load(MK));
+  };
+
+  const saveMediaF = (id, data) => {
+    const m = { ...load(MK) };
+    const hasContent = (data.driveLinks?.length || 0) + (data.videoLinks?.length || 0) > 0;
+    if (hasContent) m[id] = data; else delete m[id];
+    persist(MK, m); setMedia(m);
+    saveToDrive(load(NK), m);
+  };
+
+  // ── Camera / upload ────────────────────────────────────────────────────────
+  const handleFileCapture = async (id, sessionTitle, fileInput) => {
+    if (!accessTokenRef.current) { alert("請先登入 Google，才能直接上傳到 Drive"); return; }
+    const files = Array.from(fileInput.files || []);
+    if (!files.length) return;
+    setUploading(p => ({ ...p, [id]: true }));
+    try {
+      const med = media[id] || { driveLinks: [], videoLinks: [] };
+      const newDriveLinks = [...(med.driveLinks || [])];
+      const newVideoLinks = [...(med.videoLinks || [])];
+      for (const file of files) {
+        const isVideo = file.type.startsWith("video/");
+        const result  = await uploadMediaFile(accessTokenRef.current, file, sessionTitle);
+        const timeStr = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" });
+        const label   = `${sessionTitle.substring(0, 15)} ${isVideo ? "錄影" : "照片"} ${timeStr}`;
+        if (isVideo) newVideoLinks.push({ url: result.webViewLink, label });
+        else         newDriveLinks.push({ url: result.webViewLink, label });
+      }
+      saveMediaF(id, { driveLinks: newDriveLinks, videoLinks: newVideoLinks });
+      setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; });
+    } catch (e) { alert("上傳失敗：" + e.message); console.error(e); }
+    setUploading(p => { const n = { ...p }; delete n[id]; return n; });
+  };
+
+  // ── Auto-update ────────────────────────────────────────────────────────────
+  const fetchAndAnalyze = useCallback(async (label) => {
+    if (isUpdating) return;
+    setIsUpdating(true); setView("update");
+    let fetched = "";
+    for (const url of C_CFG.updateUrls) {
+      try {
+        const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+        if (r.ok) {
+          const d = await r.json();
+          const tmp = document.createElement("div"); tmp.innerHTML = d.contents || "";
+          fetched += `\n=== ${url} ===\n` + (tmp.innerText || "").replace(/\s+/g, " ").substring(0, 2500);
+        }
+      } catch { fetched += `\n=== ${url} ===\n[無法抓取]`; }
+    }
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 1000,
+          messages: [{ role: "user", content:
+            `你是${C_CFG.specialistProfile}的大會助理。以下是${C_CFG.name}官網最新內容（${label}）：\n${fetched}\n\n請用繁體中文：\n【1.議程異動】比對重點場次（${C_CFG.keySessionsDesc}）是否有異動。若無說「目前無重大議程異動」。\n【2.新增講者】若無說「無新增講者」。\n【3.每日建議】針對${C_CFG.specialistProfile}，給每天最重要1–2個場次。\n【4.行前提示】一句話30字以內總結。\n請直接回答，不加前言。`
+          }]
+        })
+      });
+      const data = await resp.json();
+      const result = data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "無法取得分析結果";
+      const now  = new Date().toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      const cpKey = daysLeft <= 1 ? "d1" : daysLeft <= 3 ? "d3" : daysLeft <= 7 ? "w1" : "manual";
+      const upd  = { ...load(UK), [cpKey]: { time: now, label, result }, lastCheck: { time: now, label } };
+      persist(UK, upd); setUpdates(upd);
+    } catch {
+      const now = new Date().toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      const upd = { ...load(UK), lastCheck: { time: now, label, error: true } };
+      persist(UK, upd); setUpdates(upd);
+    }
+    setIsUpdating(false);
+  }, [isUpdating, daysLeft]);
+
+  useEffect(() => {
+    for (const cp of CHECKPOINTS) {
+      if (daysLeft <= cp.days && daysLeft > 0 && !load(UK)[cp.key]) {
+        setHasDot(true);
+        const t = setTimeout(() => fetchAndAnalyze(cp.label), 3000);
+        return () => clearTimeout(t);
+      }
+    }
+  }, []);
+
+  // ── Exports ────────────────────────────────────────────────────────────────
+  const doExportHTML = () => {
+    const html = generateExportHTML(load(NK), load(MK));
+    const safe = C_CFG.driveFolderName;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    a.download = `${safe}_筆記_${new Date().toLocaleDateString("zh-TW").replace(/\//g, "-")}.html`;
+    a.click();
+    setExportDone(true); setTimeout(() => setExportDone(false), 3000);
+  };
+
+  const doExportGoogleDoc = async () => {
+    if (!accessTokenRef.current) { alert("請先登入 Google 帳號"); return; }
+    setExportingDoc(true);
+    try {
+      const url = await exportToGoogleDoc(accessTokenRef.current, load(NK), load(MK));
+      window.open(url, "_blank");
+    } catch (e) { alert("建立 Google Doc 失敗：" + e.message); }
+    setExportingDoc(false);
+  };
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const filterItems = (items) => {
+    if (!items) return [];
+    if (curFilter === "all")      return items;
+    if (curFilter === "star")     return items.filter(i => i.tags.includes("star"));
+    if (curFilter === "prenatal") return items.filter(i => i.tags.includes("prenatal"));
+    if (curFilter === "cyto")     return items.filter(i => i.tags.includes("cyto"));
+    if (curFilter === "notes")    return items.filter(i => notes[i.id] || media[i.id]);
+    return items;
+  };
+
+  // ── UI atoms ───────────────────────────────────────────────────────────────
+  const Tag = ({ t }) => {
+    const s = t === "star"     ? [CC.ambL, CC.amb, "⭐ 推薦"]
+            : t === "prenatal" ? [CC.tealL, CC.teal, "🧬 產前"]
+            :                    [CC.blueL, CC.blue, "🔬 細胞遺傳"];
+    return <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 4, background: s[0], color: s[1], marginRight: 3, display: "inline-block" }}>{s[2]}</span>;
+  };
+
+  const SyncBadge = () => {
+    if (!accessToken) return null;
+    const map = {
+      syncing: ["#FEF3C7", "#B45309", "⏳ 同步中"],
+      done:    ["#D1FAE5", "#065F46", "☁ 已同步"],
+      error:   ["#FEE2E2", "#7F1D1D", "⚠ 失敗"],
+    };
+    const s = map[syncStatus];
+    if (!s) return null;
+    return <span style={{ fontSize: 10, background: s[0], color: s[1], padding: "1px 7px", borderRadius: 10, fontWeight: 600, marginLeft: 4 }}>{s[2]}</span>;
+  };
+
+  const LoginBanner = () => {
+    if (accessToken) return (
+      <div style={{ background: CC.grnL, border: "1px solid #6EE7B7", borderRadius: 10, padding: "10px 14px", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: CC.grn }}>☁ 已連接 Google Drive</div>
+          <div style={{ fontSize: 11, color: CC.muted, marginTop: 1 }}>{userEmail} · 筆記自動同步至 {C_CFG.driveFolderName}/</div>
+        </div>
+        <SyncBadge />
+      </div>
+    );
+    return (
+      <div style={{ background: CC.accL, border: "1px solid #C7D2FE", borderRadius: 10, padding: "12px 14px", marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: CC.acc, marginBottom: 3 }}>🔗 連接 Google Drive</div>
+        <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5, marginBottom: 10 }}>登入後可跨裝置同步筆記、直接拍照上傳 Drive、匯出為 Google Doc</div>
+        <button onClick={() => tokenClient?.requestAccessToken()} disabled={!tokenClient}
+          style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 8, padding: "9px 0", fontSize: 13, fontWeight: 600, cursor: tokenClient ? "pointer" : "not-allowed", width: "100%", opacity: tokenClient ? 1 : 0.5 }}>
+          {tokenClient ? "🔑 Google 帳號登入授權" : "⏳ 載入中..."}
+        </button>
+      </div>
+    );
+  };
+
+  // ── MediaEditor ────────────────────────────────────────────────────────────
+  const MediaEditor = ({ id, sessionTitle }) => {
+    const med     = draftMedia[id] || media[id] || { driveLinks: [], videoLinks: [] };
+    const fileRef = useRef(null);
+    const update  = (patch) => setDraftMedia(p => ({ ...p, [id]: { ...med, ...patch } }));
+
+    const addLinkManual = (type) => {
+      const url = prompt(type === "drive" ? "貼上 Google Drive 連結：" : "貼上影片連結：");
+      if (!url?.trim()) return;
+      const label = prompt("幫這個連結取個名字：") || url;
+      const key   = type === "drive" ? "driveLinks" : "videoLinks";
+      update({ [key]: [...(med[key] || []), { url: url.trim(), label }] });
+    };
+
+    const removeLink = (type, idx) => {
+      const key = type === "drive" ? "driveLinks" : "videoLinks";
+      const arr = [...(med[key] || [])]; arr.splice(idx, 1);
+      update({ [key]: arr });
+    };
+
+    const isDirty = JSON.stringify(draftMedia[id]) !== JSON.stringify(media[id]);
+    const isUp    = !!uploading[id];
+
+    return (
+      <div style={{ marginTop: 10, paddingTop: 10, borderTop: CC.border }}>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: CC.muted, marginBottom: 8 }}>
+          📎 媒體連結
+          {accessToken && <span style={{ fontSize: 10, fontWeight: 500, color: CC.teal, marginLeft: 6 }}>（已連接 Drive）</span>}
+        </div>
+
+        {accessToken && (
+          <div style={{ marginBottom: 10 }}>
+            <input ref={fileRef} type="file" accept="image/*,video/*" capture="environment" multiple
+              style={{ display: "none" }}
+              onChange={e => { handleFileCapture(id, sessionTitle, e.target); e.target.value = ""; }}
+            />
+            <button onClick={() => fileRef.current?.click()} disabled={isUp}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: isUp ? "#9CA3AF" : CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: isUp ? "not-allowed" : "pointer", width: "100%" }}>
+              {isUp ? "⏳ 上傳中，請稍候..." : "📷  拍照 / 錄影 → 自動上傳 Drive"}
+            </button>
+            {isUp && <div style={{ fontSize: 11, color: CC.teal, marginTop: 5, textAlign: "center" }}>正在上傳至 {C_CFG.driveFolderName}/{sessionTitle.substring(0, 20)}...</div>}
+          </div>
+        )}
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 }}>📁 照片 / 資料夾</div>
+          {(med.driveLinks || []).map((lk, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <a href={lk.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.acc, background: CC.accL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📷 {lk.label}</a>
+              <button onClick={() => removeLink("drive", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+            </div>
+          ))}
+          <button onClick={() => addLinkManual("drive")} style={{ fontSize: 11, color: CC.acc, background: CC.accL, border: `1px dashed ${CC.acc}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 500 }}>+ 手動貼上 Drive 連結</button>
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 }}>🎥 錄影</div>
+          {(med.videoLinks || []).map((vl, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <a href={vl.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.teal, background: CC.tealL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>▶ {vl.label}</a>
+              <button onClick={() => removeLink("video", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+            </div>
+          ))}
+          <button onClick={() => addLinkManual("video")} style={{ fontSize: 11, color: CC.teal, background: CC.tealL, border: `1px dashed ${CC.teal}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 500 }}>+ 手動貼上影片連結</button>
+        </div>
+
+        {isDirty && (
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 4 }}>
+            <button onClick={() => setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; })} style={{ background: "none", border: CC.border, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: CC.muted }}>取消</button>
+            <button onClick={() => { saveMediaF(id, draftMedia[id] || {}); setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; }); }} style={{ background: CC.teal, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>儲存連結</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Schedule View ──────────────────────────────────────────────────────────
+  const ScheduleView = () => (
+    <div style={{ padding: "8px 10px 16px" }}>
+      {SESSIONS[curDay].map((bl, bi) => {
+        if (bl.brk) return (curFilter === "all" || curFilter === "notes")
+          ? <div key={bi} style={{ padding: "5px 4px", fontSize: 11, color: "#aaa", fontStyle: "italic", textAlign: "center", margin: "2px 0" }}>{bl.brk}</div>
+          : null;
+        const items = filterItems(bl.items);
+        if (!items.length) return null;
+        return (
+          <div key={bi}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "#bbb", letterSpacing: ".5px", textTransform: "uppercase", padding: "7px 2px 3px" }}>{bl.time}</div>
+            {items.map(it => {
+              const bc       = BADGE[it.b] || BADGE.corp;
+              const isOpen   = !!openCards[it.id];
+              const hasNote  = !!notes[it.id];
+              const hasMed   = !!(media[it.id]?.driveLinks?.length || media[it.id]?.videoLinks?.length);
+              const borderStyle = hasNote ? "2px solid #F59E0B" : hasMed ? `2px solid ${CC.teal}` : CC.border;
+              return (
+                <div key={it.id} style={{ background: "#fff", border: borderStyle, borderRadius: 10, marginBottom: 5, overflow: "hidden" }}>
+                  <div onClick={() => setOpenCards(p => ({ ...p, [it.id]: !p[it.id] }))} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 11px", cursor: "pointer" }}>
+                    <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, marginTop: 1, background: bc.bg, color: bc.c }}>{it.l}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.4 }}>{it.title}</div>
+                      <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", gap: 2 }}>
+                        {it.tags.map(t => <Tag key={t} t={t} />)}
+                        {hasNote && <span style={{ fontSize: 10, background: "#FFFBEB", color: "#92400E", borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>📝</span>}
+                        {hasMed  && <span style={{ fontSize: 10, background: CC.tealL, color: CC.teal, borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>📎</span>}
+                      </div>
+                    </div>
+                    <span style={{ color: "#ccc", fontSize: 15, marginTop: 1, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .18s", flexShrink: 0 }}>›</span>
+                  </div>
+                  {isOpen && (
+                    <div style={{ padding: "0 11px 12px", borderTop: CC.border }} onClick={e => e.stopPropagation()}>
+                      <div style={{ fontSize: 12, color: "#666", lineHeight: 1.65, marginTop: 8, whiteSpace: "pre-line" }}>{it.detail}</div>
+                      {it.speakers?.length > 0 && (
+                        <div style={{ marginTop: 7, paddingTop: 7, borderTop: CC.border }}>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>講者</div>
+                          {it.speakers.map(s => <span key={s} style={{ display: "inline-block", background: "#F5F5F4", border: CC.border, borderRadius: 20, padding: "2px 9px", fontSize: 11, margin: "2px" }}>{s}</span>)}
+                        </div>
+                      )}
+                      {it.link && <a href={it.link} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 12, display: "inline-block", marginTop: 6 }}>官方網站 →</a>}
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: CC.border }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: CC.muted }}>📝 我的筆記</div>
+                          <SyncBadge />
+                        </div>
+                        <textarea
+                          value={draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || "")}
+                          onChange={e => setDraftNotes(p => ({ ...p, [it.id]: e.target.value }))}
+                          placeholder="記錄重點、問題、聯繫人..."
+                          style={{ width: "100%", border: CC.border, borderRadius: 7, padding: "8px 9px", fontSize: 12, background: "#FAFAF8", resize: "vertical", minHeight: 68, fontFamily: "inherit", lineHeight: 1.55, outline: "none" }}
+                        />
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 5, marginTop: 4 }}>
+                          <button onClick={() => { setDraftNotes(p => ({ ...p, [it.id]: "" })); saveNoteF(it.id, ""); }} style={{ background: "none", border: CC.border, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: CC.muted }}>清除</button>
+                          <button onClick={() => {
+                            const v = draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || "");
+                            saveNoteF(it.id, v);
+                            setDraftNotes(p => { const n = { ...p }; delete n[it.id]; return n; });
+                          }} style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>儲存筆記</button>
+                        </div>
+                      </div>
+                      <MediaEditor id={it.id} sessionTitle={it.title} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // ── Update View ────────────────────────────────────────────────────────────
+  const UpdateView = () => (
+    <div style={{ padding: "8px 10px 16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 7, marginBottom: 10 }}>
+        {CHECKPOINTS.map(cp => {
+          const done   = !!updates[cp.key];
+          const active = !done && daysLeft <= cp.days + 1 && daysLeft > 0;
+          return (
+            <div key={cp.key} style={{ background: done ? CC.grnL : active ? CC.accL : "#F5F5F4", border: `1px solid ${done ? CC.grn : active ? CC.acc : "#E7E5E4"}`, borderRadius: 9, padding: "9px 7px", textAlign: "center" }}>
+              <div style={{ fontSize: 18 }}>{cp.icon}</div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: done ? CC.grn : active ? CC.acc : "#aaa", marginTop: 3 }}>{cp.label}</div>
+              <div style={{ fontSize: 10, color: "#bbb", marginTop: 1 }}>{done ? "✓ 已完成" : daysLeft <= cp.days ? "建議執行" : `還有 ${daysLeft - cp.days} 天`}</div>
+            </div>
+          );
+        })}
+      </div>
+      {isUpdating && <div style={{ background: CC.blueL, color: CC.blue, borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>⏳ 正在抓取官網並進行 AI 分析中...</div>}
+      {!isUpdating && updates.lastCheck?.error && <div style={{ background: CC.redL, color: CC.red, borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>⚠️ 上次更新遇到網路錯誤（{updates.lastCheck.time}）。請稍後重試。</div>}
+      {!isUpdating && updates.lastCheck && !updates.lastCheck.error && <div style={{ background: CC.grnL, color: CC.grn, borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>✓ 上次更新：{updates.lastCheck.time}（{updates.lastCheck.label}）</div>}
+      {!isUpdating && !updates.lastCheck && <div style={{ background: "#F5F5F4", color: "#aaa", borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>尚未執行任何更新。到期會自動執行，或點下方按鈕手動觸發。</div>}
+      {[...CHECKPOINTS].reverse().map(cp => updates[cp.key] && (
+        <div key={cp.key} style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: ".4px" }}>{cp.icon} {cp.label}・{updates[cp.key].time}</div>
+            <button onClick={() => fetchAndAnalyze(cp.label + " 重新整理")} disabled={isUpdating} style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 500, cursor: "pointer", opacity: isUpdating ? .5 : 1 }}>重新整理</button>
+          </div>
+          <div style={{ fontSize: 13, color: "#333", lineHeight: 1.75, whiteSpace: "pre-wrap" }}>{updates[cp.key].result}</div>
+        </div>
+      ))}
+      {updates.manual && (
+        <div style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>🔄 手動更新・{updates.manual.time}</div>
+          <div style={{ fontSize: 13, color: "#333", lineHeight: 1.75, whiteSpace: "pre-wrap" }}>{updates.manual.result}</div>
+        </div>
+      )}
+      <button onClick={() => fetchAndAnalyze("手動更新")} disabled={isUpdating} style={{ width: "100%", background: CC.acc, color: "#fff", border: "none", borderRadius: 10, padding: 11, fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: isUpdating ? .6 : 1, marginTop: 4 }}>
+        {isUpdating ? "分析中..." : "立即執行更新 →"}
+      </button>
+    </div>
+  );
+
+  // ── Notes View ─────────────────────────────────────────────────────────────
+  const NotesView = () => {
+    const idx       = buildIdx();
+    const noteKeys  = Object.keys(notes);
+    const mediaKeys = Object.keys(media);
+    const allKeys   = [...new Set([...noteKeys, ...mediaKeys])];
+    return (
+      <div style={{ padding: "8px 10px 16px" }}>
+        <LoginBanner />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+          <div style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px", textAlign: "center" }}>
+            <div style={{ fontSize: 26, fontWeight: 600, color: CC.acc }}>{noteKeys.length}</div>
+            <div style={{ fontSize: 11, color: CC.muted, marginTop: 1 }}>則文字筆記</div>
+          </div>
+          <div style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px", textAlign: "center" }}>
+            <div style={{ fontSize: 26, fontWeight: 600, color: CC.teal }}>{Object.values(media).reduce((a, m) => a + (m.driveLinks?.length || 0) + (m.videoLinks?.length || 0), 0)}</div>
+            <div style={{ fontSize: 11, color: CC.muted, marginTop: 1 }}>個媒體連結</div>
+          </div>
+        </div>
+        {!allKeys.length ? (
+          <div style={{ textAlign: "center", padding: "36px 12px", color: "#bbb" }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>📭</div>
+            <div style={{ fontSize: 13 }}>還沒有任何筆記或媒體連結</div>
+          </div>
+        ) : allKeys.map(id => {
+          const info = idx[id] || { title: id, day: "", time: "" };
+          const med  = media[id] || {};
+          return (
+            <div key={id} style={{ background: "#fff", border: CC.border, borderLeft: notes[id] ? "3px solid #F59E0B" : `3px solid ${CC.teal}`, borderRadius: "0 10px 10px 0", padding: "10px 12px", marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "#bbb", marginBottom: 2 }}>{info.day}・{info.time}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: notes[id] ? 6 : 4 }}>{info.title}</div>
+              {notes[id] && <div style={{ fontSize: 12, color: "#555", lineHeight: 1.55, whiteSpace: "pre-wrap", marginBottom: (med.driveLinks?.length || med.videoLinks?.length) ? 8 : 0 }}>{notes[id]}</div>}
+              {(med.driveLinks || []).map((lk, i) => <a key={i} href={lk.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: CC.accL, color: CC.acc, borderRadius: 6, padding: "3px 9px", fontSize: 11, fontWeight: 500, textDecoration: "none", margin: "2px" }}>📷 {lk.label}</a>)}
+              {(med.videoLinks || []).map((vl, i) => <a key={i} href={vl.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: CC.tealL, color: CC.teal, borderRadius: 6, padding: "3px 9px", fontSize: 11, fontWeight: 500, textDecoration: "none", margin: "2px" }}>▶ {vl.label}</a>)}
+            </div>
+          );
+        })}
+        <div style={{ marginTop: 14, background: "linear-gradient(135deg,#1E1B4B,#4338CA)", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ color: "#fff", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>📄 匯出會議記錄</div>
+          <div style={{ color: "rgba(255,255,255,.65)", fontSize: 12, marginBottom: 12 }}>HTML 可離線儲存列印；Google Doc 可在線編輯與分享</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <button onClick={doExportHTML} style={{ background: "rgba(255,255,255,.2)", color: "#fff", border: "1px solid rgba(255,255,255,.35)", borderRadius: 8, padding: "9px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              {exportDone ? "✓ 下載中..." : "↓ 下載 HTML 版本（可列印）"}
+            </button>
+            <button onClick={doExportGoogleDoc} disabled={!accessToken || exportingDoc}
+              style={{ background: accessToken ? "#fff" : "rgba(255,255,255,.15)", color: accessToken ? CC.acc : "rgba(255,255,255,.4)", border: "none", borderRadius: 8, padding: "9px 0", fontSize: 13, fontWeight: 700, cursor: accessToken ? "pointer" : "not-allowed" }}>
+              {exportingDoc ? "⏳ 建立 Google Doc 中..." : accessToken ? "↗ 匯出為 Google Doc（可編輯）" : "請先登入 Google 帳號"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Info View ──────────────────────────────────────────────────────────────
+  const InfoView = () => (
+    <div style={{ padding: "8px 10px 16px" }}>
+      <LoginBanner />
+      {[
+        {
+          title: "📍 地點",
+          body: <><div style={{ fontSize: 13, fontWeight: 600 }}>{C_CFG.venue?.split("，")[0]}</div><div style={{ fontSize: 12, color: CC.muted, margin: "2px 0 5px" }}>{C_CFG.venue?.split("，")[1] || ""}</div><a href={C_CFG.mapsUrl} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 12 }}>Google 地圖 →</a></>
+        },
+        {
+          title: "🕐 報到時間",
+          body: <div style={{ fontSize: 12, color: CC.muted, lineHeight: 2.1 }}>{C_CFG.registrationTimes.map((t, i) => <span key={i}>{t}<br/></span>)}</div>
+        },
+        {
+          title: "🔗 重要連結",
+          body: <>{C_CFG.links.map(([l, h]) => <a key={l} href={h} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 13, display: "block", marginBottom: 5 }}>{l} →</a>)}</>
+        },
+      ].map(({ title, body }) => (
+        <div key={title} style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "#bbb", marginBottom: 7 }}>{title}</div>
+          {body}
+        </div>
+      ))}
+      <div style={{ background: CC.ambL, border: "1px solid #FCD34D", borderRadius: 10, padding: "12px 14px" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: CC.amb, marginBottom: 7 }}>📌 個人備忘</div>
+        {C_CFG.personalReminders.map(s => (
+          <div key={s} style={{ fontSize: 12, color: CC.amb, lineHeight: 2, paddingLeft: 13, position: "relative" }}>
+            <span style={{ position: "absolute", left: 0 }}>•</span>{s}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  const dayEntries = Object.entries(DAYS);
+  const filters    = [["all","全部"],["star","⭐ 推薦"],["prenatal","🧬 產前"],["cyto","🔬 細胞遺傳"],["notes","📝 有記錄"]];
+  const filterColor = { all: CC.acc, star: CC.amb, prenatal: CC.teal, cyto: CC.blue, notes: "#B45309" };
+  const navItems   = [["schedule","📅","議程"],["update","🔄","更新"],["notes","📝","筆記"],["info","ℹ️","資訊"]];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100svh", maxWidth: 700, margin: "0 auto", fontFamily: "-apple-system,'Helvetica Neue',sans-serif", fontSize: 14, color: "#1C1917", background: "#FAFAF8" }}>
+
+      <div style={{ background: "linear-gradient(135deg,#1E1B4B 0%,#4338CA 100%)", color: "#fff", padding: "12px 14px 0", flexShrink: 0, paddingTop: "max(env(safe-area-inset-top,0px), 12px)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-.3px" }}>
+              {C_CFG.name}
+              {accessToken && <span style={{ fontSize: 10, background: "rgba(255,255,255,.2)", padding: "1px 7px", borderRadius: 10, marginLeft: 7, verticalAlign: "middle" }}>
+                {syncStatus === "syncing" ? "⏳" : "☁"} Drive
+              </span>}
+            </div>
+            <div style={{ fontSize: 11, opacity: .6, marginTop: 1 }}>
+              {C_CFG.location.split("，")[0]}・{C_CFG.dates}・{daysLeft > 0 ? `距今 ${daysLeft} 天` : "進行中"}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 5 }}>
+            {!accessToken && <button onClick={() => tokenClient?.requestAccessToken()} disabled={!tokenClient} style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", borderRadius: 20, padding: "5px 11px", fontSize: 11, fontWeight: 500, cursor: tokenClient ? "pointer" : "not-allowed" }}>🔑 登入</button>}
+            <button onClick={() => { fetchAndAnalyze("手動更新"); setView("update"); }} style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", borderRadius: 20, padding: "5px 11px", fontSize: 11, fontWeight: 500, cursor: "pointer" }}>↻ 更新</button>
+            <button onClick={doExportHTML} style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", borderRadius: 20, padding: "5px 11px", fontSize: 11, fontWeight: 500, cursor: "pointer" }}>{exportDone ? "✓" : "↓ 匯出"}</button>
+          </div>
+        </div>
+        {curView === "schedule" && (
+          <div style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none" }}>
+            {dayEntries.map(([d, label]) => (
+              <button key={d} onClick={() => setCurDay(d)} style={{ flexShrink: 0, padding: "8px 13px", fontSize: 12, fontWeight: 500, color: curDay === d ? "#fff" : "rgba(255,255,255,.45)", cursor: "pointer", borderBottom: curDay === d ? "2.5px solid #fff" : "2.5px solid transparent", borderTop: "none", borderLeft: "none", borderRight: "none", background: "none", whiteSpace: "nowrap" }}>{label}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {curView === "schedule" && (
+        <div style={{ background: "#fff", borderBottom: CC.border, padding: "7px 12px", display: "flex", gap: 5, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 }}>
+          {filters.map(([f, label]) => {
+            const active = curFilter === f;
+            const fc     = filterColor[f];
+            return <button key={f} onClick={() => setFilter(f)} style={{ flexShrink: 0, padding: "4px 10px", border: active ? `1px solid ${fc}` : CC.border, borderRadius: 20, fontSize: 11, cursor: "pointer", background: active ? fc : "none", color: active ? "#fff" : "#999", fontWeight: 500 }}>{label}</button>;
+          })}
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflowY: "auto", background: "#FAFAF8" }}>
+        {curView === "schedule" && <ScheduleView />}
+        {curView === "update"   && <UpdateView />}
+        {curView === "notes"    && <NotesView />}
+        {curView === "info"     && <InfoView />}
+      </div>
+
+      <div style={{ background: "#fff", borderTop: CC.border, display: "flex", flexShrink: 0, paddingBottom: "env(safe-area-inset-bottom,0px)" }}>
+        {navItems.map(([v, icon, label]) => (
+          <button key={v} onClick={() => { setView(v); if (v === "update") setHasDot(false); }} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "7px 4px 9px", cursor: "pointer", fontSize: 10, fontWeight: 500, color: curView === v ? CC.acc : "#bbb", border: "none", background: "none", gap: 2, position: "relative" }}>
+            <span style={{ fontSize: 18 }}>{icon}</span>{label}
+            {v === "update" && hasDot && <span style={{ position: "absolute", top: 6, right: "calc(50% - 14px)", width: 7, height: 7, borderRadius: "50%", background: "#EF4444" }} />}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

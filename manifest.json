@@ -1,0 +1,20 @@
+{
+  "name": "Conference Companion 會議助理",
+  "short_name": "會議助理",
+  "description": "醫學會議議程瀏覽、筆記、Google Drive 同步",
+  "start_url": "/conference-companion/",
+  "scope": "/conference-companion/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1E1B4B",
+  "theme_color": "#1E1B4B",
+  "lang": "zh-TW",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
