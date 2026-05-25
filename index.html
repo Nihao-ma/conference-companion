@@ -541,17 +541,11 @@ function App() {
 
   // ── MediaEditor ────────────────────────────────────────────────────────────
   const MediaEditor = ({ id, sessionTitle }) => {
-    const med     = draftMedia[id] || media[id] || { driveLinks: [], videoLinks: [] };
-    const fileRef = useRef(null);
-    const update  = (patch) => setDraftMedia(p => ({ ...p, [id]: { ...med, ...patch } }));
-
-    const addLinkManual = (type) => {
-      const url = prompt(type === "drive" ? "貼上 Google Drive 連結：" : "貼上影片連結：");
-      if (!url?.trim()) return;
-      const label = prompt("幫這個連結取個名字：") || url;
-      const key   = type === "drive" ? "driveLinks" : "videoLinks";
-      update({ [key]: [...(med[key] || []), { url: url.trim(), label }] });
-    };
+    const med       = draftMedia[id] || media[id] || { driveLinks: [], videoLinks: [] };
+    const cameraRef = useRef(null);
+    const libRef    = useRef(null);
+    const [uploadDone, setUploadDone] = React.useState(false);
+    const update = (patch) => setDraftMedia(p => ({ ...p, [id]: { ...med, ...patch } }));
 
     const removeLink = (type, idx) => {
       const key = type === "drive" ? "driveLinks" : "videoLinks";
@@ -559,56 +553,89 @@ function App() {
       update({ [key]: arr });
     };
 
+    const onCameraChange = async (e) => {
+      await handleFileCapture(id, sessionTitle, e.target);
+      e.target.value = "";
+      setUploadDone(true);
+      setTimeout(() => setUploadDone(false), 6000);
+    };
+
+    const onLibChange = (e) => {
+      handleFileCapture(id, sessionTitle, e.target);
+      e.target.value = "";
+    };
+
     const isDirty = JSON.stringify(draftMedia[id]) !== JSON.stringify(media[id]);
     const isUp    = !!uploading[id];
+    const hasLinks = (med.driveLinks || []).length > 0 || (med.videoLinks || []).length > 0;
 
     return (
       <div style={{ marginTop: 10, paddingTop: 10, borderTop: CC.border }}>
         <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: CC.muted, marginBottom: 8 }}>
-          📎 媒體連結
+          📎 媒體
           {accessToken && <span style={{ fontSize: 10, fontWeight: 500, color: CC.teal, marginLeft: 6 }}>（已連接 Drive）</span>}
         </div>
 
         {accessToken && (
           <div style={{ marginBottom: 10 }}>
-            <input ref={fileRef} type="file" accept="image/*,video/*" capture="environment" multiple
-              style={{ display: "none" }}
-              onChange={e => { handleFileCapture(id, sessionTitle, e.target); e.target.value = ""; }}
-            />
-            <button onClick={() => fileRef.current?.click()} disabled={isUp}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: isUp ? "#9CA3AF" : CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: isUp ? "not-allowed" : "pointer", width: "100%" }}>
-              {isUp ? "⏳ 上傳中，請稍候..." : "📷  拍照 / 錄影 → 自動上傳 Drive"}
-            </button>
+            {/* 相機 input — 每次一張，拍完可繼續 */}
+            <input ref={cameraRef} type="file" accept="image/*,video/*" capture="environment"
+              style={{ display: "none" }} onChange={onCameraChange} />
+            {/* 相簿 input — 批次多選 */}
+            <input ref={libRef} type="file" accept="image/*,video/*" multiple
+              style={{ display: "none" }} onChange={onLibChange} />
+
+            {isUp ? (
+              <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, textAlign: "center", color: "#16A34A" }}>
+                ⏳ 上傳中，請稍候...
+              </div>
+            ) : uploadDone ? (
+              <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ flex: 1, background: "#D1FAE5", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, textAlign: "center", color: "#059669" }}>
+                  ✅ 上傳成功！
+                </div>
+                <button onClick={() => { setUploadDone(false); cameraRef.current?.click(); }}
+                  style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  📷 再拍一張
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => cameraRef.current?.click()}
+                  style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  📷 拍照
+                </button>
+                <button onClick={() => libRef.current?.click()}
+                  style={{ flex: 1, background: CC.acc, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  🖼️ 相簿批次
+                </button>
+              </div>
+            )}
             {isUp && <div style={{ fontSize: 11, color: CC.teal, marginTop: 5, textAlign: "center" }}>正在上傳至 {C_CFG.driveFolderName}/{sessionTitle.substring(0, 20)}...</div>}
           </div>
         )}
 
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 }}>📁 照片 / 資料夾</div>
-          {(med.driveLinks || []).map((lk, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-              <a href={lk.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.acc, background: CC.accL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📷 {lk.label}</a>
-              <button onClick={() => removeLink("drive", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
-            </div>
-          ))}
-          <button onClick={() => addLinkManual("drive")} style={{ fontSize: 11, color: CC.acc, background: CC.accL, border: `1px dashed ${CC.acc}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 500 }}>+ 手動貼上 Drive 連結</button>
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 }}>🎥 錄影</div>
-          {(med.videoLinks || []).map((vl, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-              <a href={vl.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.teal, background: CC.tealL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>▶ {vl.label}</a>
-              <button onClick={() => removeLink("video", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
-            </div>
-          ))}
-          <button onClick={() => addLinkManual("video")} style={{ fontSize: 11, color: CC.teal, background: CC.tealL, border: `1px dashed ${CC.teal}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 500 }}>+ 手動貼上影片連結</button>
-        </div>
+        {hasLinks && (
+          <div style={{ marginBottom: 8 }}>
+            {(med.driveLinks || []).map((lk, i) => (
+              <div key={"d"+i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <a href={lk.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.acc, background: CC.accL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📷 {lk.label}</a>
+                <button onClick={() => removeLink("drive", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+              </div>
+            ))}
+            {(med.videoLinks || []).map((vl, i) => (
+              <div key={"v"+i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <a href={vl.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.teal, background: CC.tealL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>▶ {vl.label}</a>
+                <button onClick={() => removeLink("video", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {isDirty && (
           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 4 }}>
             <button onClick={() => setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; })} style={{ background: "none", border: CC.border, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: CC.muted }}>取消</button>
-            <button onClick={() => { saveMediaF(id, draftMedia[id] || {}); setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; }); }} style={{ background: CC.teal, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>儲存連結</button>
+            <button onClick={() => { saveMediaF(id, draftMedia[id] || {}); setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; }); }} style={{ background: CC.teal, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>儲存</button>
           </div>
         )}
       </div>
