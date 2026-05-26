@@ -543,8 +543,9 @@ function App() {
   const MediaEditor = ({ id, sessionTitle }) => {
     const med       = draftMedia[id] || media[id] || { driveLinks: [], videoLinks: [] };
     const cameraRef = useRef(null);
+    const videoRef  = useRef(null);
     const libRef    = useRef(null);
-    const [uploadDone, setUploadDone] = React.useState(false);
+    const [doneType, setDoneType] = React.useState(null); // null | "photo" | "video"
     const update = (patch) => setDraftMedia(p => ({ ...p, [id]: { ...med, ...patch } }));
 
     const removeLink = (type, idx) => {
@@ -556,8 +557,15 @@ function App() {
     const onCameraChange = async (e) => {
       await handleFileCapture(id, sessionTitle, e.target);
       e.target.value = "";
-      setUploadDone(true);
-      setTimeout(() => setUploadDone(false), 6000);
+      setDoneType("photo");
+      setTimeout(() => setDoneType(null), 6000);
+    };
+
+    const onVideoChange = async (e) => {
+      await handleFileCapture(id, sessionTitle, e.target);
+      e.target.value = "";
+      setDoneType("video");
+      setTimeout(() => setDoneType(null), 6000);
     };
 
     const onLibChange = (e) => {
@@ -565,8 +573,8 @@ function App() {
       e.target.value = "";
     };
 
-    const isDirty = JSON.stringify(draftMedia[id]) !== JSON.stringify(media[id]);
-    const isUp    = !!uploading[id];
+    const isDirty  = JSON.stringify(draftMedia[id]) !== JSON.stringify(media[id]);
+    const isUp     = !!uploading[id];
     const hasLinks = (med.driveLinks || []).length > 0 || (med.videoLinks || []).length > 0;
 
     return (
@@ -578,10 +586,13 @@ function App() {
 
         {accessToken && (
           <div style={{ marginBottom: 10 }}>
-            {/* 相機 input — 每次一張，拍完可繼續 */}
-            <input ref={cameraRef} type="file" accept="image/*,video/*" capture="environment"
+            {/* 拍照 input — capture 模式，每次一張 */}
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment"
               style={{ display: "none" }} onChange={onCameraChange} />
-            {/* 相簿 input — 批次多選 */}
+            {/* 錄影 input — capture 模式 */}
+            <input ref={videoRef} type="file" accept="video/*" capture="environment"
+              style={{ display: "none" }} onChange={onVideoChange} />
+            {/* 相簿 input — 批次多選（無 capture，允許選擇任何檔案）*/}
             <input ref={libRef} type="file" accept="image/*,video/*" multiple
               style={{ display: "none" }} onChange={onLibChange} />
 
@@ -589,25 +600,36 @@ function App() {
               <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, textAlign: "center", color: "#16A34A" }}>
                 ⏳ 上傳中，請稍候...
               </div>
-            ) : uploadDone ? (
+            ) : doneType ? (
               <div style={{ display: "flex", gap: 6 }}>
                 <div style={{ flex: 1, background: "#D1FAE5", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, textAlign: "center", color: "#059669" }}>
                   ✅ 上傳成功！
                 </div>
-                <button onClick={() => { setUploadDone(false); cameraRef.current?.click(); }}
-                  style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  📷 再拍一張
-                </button>
+                {doneType === "photo" ? (
+                  <button onClick={() => { setDoneType(null); cameraRef.current?.click(); }}
+                    style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                    📷 再拍一張
+                  </button>
+                ) : (
+                  <button onClick={() => { setDoneType(null); videoRef.current?.click(); }}
+                    style={{ flex: 1, background: "#7C3AED", color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                    🎥 再錄一段
+                  </button>
+                )}
               </div>
             ) : (
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 5 }}>
                 <button onClick={() => cameraRef.current?.click()}
-                  style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "9px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                   📷 拍照
                 </button>
+                <button onClick={() => videoRef.current?.click()}
+                  style={{ flex: 1, background: "#7C3AED", color: "#fff", border: "none", borderRadius: 9, padding: "9px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                  🎥 錄影
+                </button>
                 <button onClick={() => libRef.current?.click()}
-                  style={{ flex: 1, background: CC.acc, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  🖼️ 相簿批次
+                  style={{ flex: 1, background: CC.acc, color: "#fff", border: "none", borderRadius: 9, padding: "9px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                  🖼️ 批次
                 </button>
               </div>
             )}
@@ -651,6 +673,76 @@ function App() {
           : null;
         const items = filterItems(bl.items);
         if (!items.length) return null;
+
+        // ── 並行場次：橫向卡片滑動 ──────────────────────────────
+        if (bl.parallel) {
+          return (
+            <div key={bi} style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: "#bbb", letterSpacing: ".5px", textTransform: "uppercase", padding: "7px 2px 2px", display: "flex", alignItems: "center", gap: 6 }}>
+                {bl.time}
+                <span style={{ background: "#EFF6FF", color: "#1E40AF", borderRadius: 4, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>⚡ 並行 {bl.items?.length || items.length} 場</span>
+              </div>
+              <div style={{ fontSize: 10, color: "#ccc", marginBottom: 5, paddingLeft: 2 }}>← 左右滑動查看全部場次</div>
+              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 10, WebkitOverflowScrolling: "touch", alignItems: "flex-start" }}>
+                {items.map(it => {
+                  const bc      = BADGE[it.b] || BADGE.corp;
+                  const isOpen  = !!openCards[it.id];
+                  const hasNote = !!notes[it.id];
+                  const hasMed  = !!(media[it.id]?.driveLinks?.length || media[it.id]?.videoLinks?.length);
+                  const bdr     = hasNote ? "2px solid #F59E0B" : hasMed ? `2px solid ${CC.teal}` : CC.border;
+                  return (
+                    <div key={it.id} style={{ minWidth: 210, width: 210, background: "#fff", border: bdr, borderRadius: 10, flexShrink: 0, overflow: "hidden" }}>
+                      <div onClick={() => setOpenCards(p => ({ ...p, [it.id]: !p[it.id] }))} style={{ padding: "9px 10px", cursor: "pointer" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: bc.bg, color: bc.c }}>{it.l}</span>
+                          <span style={{ color: "#ccc", fontSize: 14, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 500, lineHeight: 1.35, marginBottom: 3 }}>{it.title}</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                          {it.tags.map(t => <Tag key={t} t={t} />)}
+                          {hasNote && <span style={{ fontSize: 10, background: "#FFFBEB", color: "#92400E", borderRadius: 4, padding: "1px 5px" }}>📝</span>}
+                          {hasMed  && <span style={{ fontSize: 10, background: CC.tealL, color: CC.teal, borderRadius: 4, padding: "1px 5px" }}>📎</span>}
+                        </div>
+                      </div>
+                      {isOpen && (
+                        <div style={{ padding: "0 10px 10px", borderTop: CC.border }} onClick={e => e.stopPropagation()}>
+                          <div style={{ fontSize: 11, color: "#555", lineHeight: 1.6, marginTop: 7, whiteSpace: "pre-line" }}>{it.detail}</div>
+                          {it.speakers?.length > 0 && it.speakers[0] !== "（詳見大會APP）" && (
+                            <div style={{ marginTop: 6, paddingTop: 6, borderTop: CC.border }}>
+                              {it.speakers.map(s => <span key={s} style={{ display: "inline-block", background: "#F5F5F4", border: CC.border, borderRadius: 20, padding: "2px 8px", fontSize: 10, margin: "2px" }}>{s}</span>)}
+                            </div>
+                          )}
+                          {it.link && <a href={it.link} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 11, display: "inline-block", marginTop: 5 }}>大會APP →</a>}
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: CC.border }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: CC.muted }}>📝 筆記</div>
+                              <SyncBadge />
+                            </div>
+                            <textarea
+                              value={draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || "")}
+                              onChange={e => setDraftNotes(p => ({ ...p, [it.id]: e.target.value }))}
+                              placeholder="記錄重點..."
+                              style={{ width: "100%", border: CC.border, borderRadius: 6, padding: "7px 8px", fontSize: 11, background: "#FAFAF8", resize: "vertical", minHeight: 52, fontFamily: "inherit", lineHeight: 1.5, outline: "none" }}
+                            />
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginTop: 3 }}>
+                              <button onClick={() => { setDraftNotes(p => ({ ...p, [it.id]: "" })); saveNoteF(it.id, ""); }}
+                                style={{ background: "none", border: CC.border, borderRadius: 5, padding: "4px 8px", fontSize: 10, cursor: "pointer", color: CC.muted }}>清除</button>
+                              <button onClick={() => { const v = draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || ""); saveNoteF(it.id, v); setDraftNotes(p => { const n = { ...p }; delete n[it.id]; return n; }); }}
+                                style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 5, padding: "4px 10px", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>儲存</button>
+                            </div>
+                          </div>
+                          <MediaEditor id={it.id} sessionTitle={it.title} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }
+
+        // ── 一般場次：垂直排列 ─────────────────────────────────
         return (
           <div key={bi}>
             <div style={{ fontSize: 10, fontWeight: 600, color: "#bbb", letterSpacing: ".5px", textTransform: "uppercase", padding: "7px 2px 3px" }}>{bl.time}</div>
