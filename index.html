@@ -11,8 +11,14 @@
 <link rel="apple-touch-icon" sizes="192x192" href="icon.png">
 <link rel="manifest" href="manifest.json">
 
-<!-- ★ 會議設定檔 — 每次換會議只改這個檔案 -->
-<script src="conference.js"></script>
+<!-- ★ 會議設定檔 — ?conf=ESHG2026 載入對應檔案，無參數則用 conference.js -->
+ <script>
+  (function() {
+     var conf = new URLSearchParams(location.search).get('conf');
+     var src = conf ? 'conference_' + conf + '.js' : 'conference.js';
+     document.write('<scr'+'ipt src="' + src + '"><\/scr'+'ipt>');
+  })();
+ </script>
 
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async></script>
