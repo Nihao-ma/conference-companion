@@ -330,6 +330,8 @@ function Icon({ name, size=22, color="currentColor", stroke=1.7 }) {
     arrowR:   <path d="M5 12h14M13 6l6 6-6 6" {...p}/>,
     video:    <><path d="M4 8a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2H4Z" {...p}/><path d="M16 10l4-2v8l-4-2V10Z" {...p}/></>,
     swap:     <><path d="M7 16V4M7 4L4 7M7 4l3 3" {...p}/><path d="M17 8v12M17 20l-3-3M17 20l3-3" {...p}/></>,
+    badge:    <><rect x="3" y="4" width="18" height="16" rx="2.5" {...p}/><path d="M3 9h18" {...p}/><circle cx="9" cy="13.5" r="2" {...p}/><path d="M13 12h4M13 15h3" {...p}/></>,
+    qr:       <><rect x="3" y="3" width="7" height="7" rx="1" {...p}/><rect x="14" y="3" width="7" height="7" rx="1" {...p}/><rect x="3" y="14" width="7" height="7" rx="1" {...p}/><path d="M14 14h1M17 14h3M14 17v3M17 17h1M20 17v3M20 14v1" {...p}/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" style={{display:"block"}}>{paths[name]}</svg>;
 }
@@ -865,62 +867,170 @@ function ExportBtn({ icon, label, sub, onClick, dim, loading }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// UPDATES SCREEN
+// BADGE / CHECK-IN SCREEN（報到資訊）
 // ══════════════════════════════════════════════════════════════════════════════
-function UpdatesScreen({ S }) {
-  const conf=getCONF();
-  const { daysLeft, updates, isUpdating, runUpdate } = S;
-  const lastCheck=updates.lastCheck;
-  const latestResult=[...conf.checkpoints].reverse().find(cp=>updates[cp.key]);
+function BadgeScreen({ S }) {
+  const conf    = getCONF();
+  const { activeKey } = S;
+  const IMG_KEY = `ccx_badge_img_${activeKey}`;
+  const NUM_KEY = `ccx_regnum_${activeKey}`;
+
+  const [badgeImg,  setBadgeImg]  = useState(() => localStorage.getItem(IMG_KEY) || null);
+  const [regNum,    setRegNum]    = useState(() => localStorage.getItem(NUM_KEY) || "");
+  const [numInput,  setNumInput]  = useState(() => localStorage.getItem(NUM_KEY) || "");
+  const [editNum,   setEditNum]   = useState(false);
+  const [compressing, setComp]    = useState(false);
+  const [copied,    setCopied]    = useState(false);
+  const camRef = useRef(null);
+  const libRef = useRef(null);
+
+  // 壓縮圖片（避免 localStorage 超量）
+  const compress = (file) => new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 900;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      cv.getContext("2d").drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(cv.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setComp(true);
+    try {
+      const b64 = await compress(file);
+      localStorage.setItem(IMG_KEY, b64);
+      setBadgeImg(b64);
+    } catch { S.toast("圖片處理失敗，請再試一次"); }
+    setComp(false);
+    e.target.value = "";
+  };
+
+  const clearImg = () => { localStorage.removeItem(IMG_KEY); setBadgeImg(null); };
+
+  const saveNum = () => {
+    const v = numInput.trim();
+    if (v) localStorage.setItem(NUM_KEY, v); else localStorage.removeItem(NUM_KEY);
+    setRegNum(v); setEditNum(false);
+  };
+  const copyNum = () => {
+    navigator.clipboard?.writeText(regNum).catch(()=>{});
+    setCopied(true); setTimeout(()=>setCopied(false), 2000);
+  };
+
+  const btn = (bg, color, extra={}) => ({ border:"none", cursor:"pointer", borderRadius:9, padding:"9px 16px", fontSize:12.5, fontWeight:600, fontFamily:FONT_SANS, background:bg, color, ...extra });
+
   return (
     <div style={{padding:"4px 16px 24px"}}>
-      <div style={{background:T.surface,border:`1px solid ${T.hair}`,borderRadius:16,padding:"15px 16px",boxShadow:"0 1px 2px rgba(27,25,48,.04)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:40,height:40,borderRadius:12,background:T.primaryTint,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="spark" size={21} color={T.primary}/></div>
-          <div style={{flex:1}}>
-            <div style={{fontSize:14.5,fontWeight:700,color:T.ink}}>智慧行前更新</div>
-            <div style={{fontSize:12,color:T.muted,marginTop:1}}>AI 自動比對官網・距開課 <b style={{color:T.primary}}>{daysLeft}</b> 天</div>
-          </div>
-        </div>
-      </div>
-      <SectionHead>自動檢查點</SectionHead>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:9}}>
-        {conf.checkpoints.map(cp=>{
-          const done=!!updates[cp.key], active=!done&&daysLeft<=cp.days+1&&daysLeft>0;
-          return (
-            <div key={cp.key} style={{background:done?"#E6F6F0":T.surface,border:`1px solid ${done?"#0A6E5055":active?T.primary+"66":T.hair}`,borderRadius:13,padding:"12px 9px",textAlign:"center"}}>
-              <div style={{width:26,height:26,borderRadius:"50%",margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"center",background:done?"#0A6E50":active?T.primary:T.surfaceAlt}}>
-                <Icon name={done?"check":"clock"} size={14} color={done||active?"#fff":T.faint} stroke={2.2}/>
-              </div>
-              <div style={{fontSize:11.5,fontWeight:700,color:done?"#0A6E50":active?T.primary:T.ink2,marginTop:7}}>{cp.label}</div>
-              <div style={{fontSize:10,color:T.muted,marginTop:2,lineHeight:1.35}}>{done?"✓ 已完成":daysLeft<=cp.days?"建議執行":`還有 ${daysLeft-cp.days} 天`}</div>
+
+      {/* ── 入場憑證（截圖 / 圖片） ── */}
+      <Card pad={16}>
+        <div style={{fontSize:11.5,fontWeight:700,letterSpacing:".8px",color:T.muted,marginBottom:14}}>入場憑證</div>
+
+        {/* hidden file inputs */}
+        <input ref={camRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handleFile}/>
+        <input ref={libRef} type="file" accept="image/*"                       style={{display:"none"}} onChange={handleFile}/>
+
+        {badgeImg ? (
+          /* 已有圖片 — 顯示截圖 */
+          <>
+            <div style={{borderRadius:14,overflow:"hidden",border:`1px solid ${T.hair}`,marginBottom:12}}>
+              <img src={badgeImg} alt="入場憑證" style={{width:"100%",display:"block"}}/>
             </div>
-          );
-        })}
-      </div>
-      <SectionHead action={lastCheck&&!lastCheck.error&&<span style={{fontSize:11,color:T.muted}}>{lastCheck.time}</span>}>分析結果</SectionHead>
-      {isUpdating ? (
-        <Card pad={18}><div style={{display:"flex",alignItems:"center",gap:12}}><div className="cc-spin" style={{width:22,height:22,borderRadius:"50%",border:`2.5px solid ${T.hair}`,borderTopColor:T.primary,flexShrink:0}}/><div><div style={{fontSize:13.5,fontWeight:600,color:T.ink}}>正在抓取官網並進行 AI 分析…</div><div style={{fontSize:12,color:T.muted,marginTop:2}}>比對議程、講者與行前提醒</div></div></div></Card>
-      ) : lastCheck?.error ? (
-        <Card pad={14} style={{background:"#FFF1F1",borderColor:"#FECACA"}}><div style={{fontSize:13,color:"#991B1B",lineHeight:1.6}}>⚠️ 上次更新遇到錯誤（{lastCheck.time}）。請稍後重試。</div></Card>
-      ) : latestResult ? (
-        <Card pad={0}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 15px",borderBottom:`1px solid ${T.hair2}`}}>
-            <Icon name="spark" size={15} color={T.primary}/>
-            <span style={{fontSize:12,fontWeight:700,color:T.ink2}}>{updates[latestResult.key].label}・{updates[latestResult.key].time}</span>
-            <button onClick={runUpdate} style={{marginLeft:"auto",border:"none",background:T.primaryTint,color:T.primary,cursor:"pointer",borderRadius:8,padding:"5px 11px",fontSize:11.5,fontWeight:600,fontFamily:FONT_SANS}}>重新整理</button>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>libRef.current?.click()} style={btn(T.primaryTint, T.primary)}>重新上傳</button>
+              <button onClick={()=>camRef.current?.click()} style={btn(T.surfaceAlt, T.ink2)}>拍照</button>
+              <button onClick={clearImg} style={btn("transparent", T.faint, {marginLeft:"auto"})}>清除</button>
+            </div>
+          </>
+        ) : compressing ? (
+          /* 壓縮中 */
+          <div style={{padding:"32px 0",textAlign:"center",color:T.muted,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+            <div className="cc-spin" style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${T.hair}`,borderTopColor:T.primary}}/>
+            處理圖片中…
           </div>
-          <div style={{padding:"13px 15px",fontSize:13,color:T.ink2,lineHeight:1.8,whiteSpace:"pre-line"}}>
-            {(updates[latestResult.key].result||"").split(/(【[^】]+】)/g).map((pt,i)=>pt.startsWith("【")?<b key={i} style={{color:T.primary,fontWeight:700}}>{pt}</b>:<React.Fragment key={i}>{pt}</React.Fragment>)}
+        ) : (
+          /* 空白佔位 */
+          <div style={{border:`1.5px dashed ${T.hair}`,borderRadius:14,padding:"28px 16px",textAlign:"center",background:T.surfaceAlt}}>
+            <div style={{fontSize:40,marginBottom:12,lineHeight:1}}>📧</div>
+            <div style={{fontSize:14,fontWeight:600,color:T.ink,marginBottom:6}}>上傳報名確認截圖</div>
+            <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:18}}>
+              截圖報名成功信件中的 QR code<br/>或確認頁面，儲存在這裡方便報到時出示
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+              <button onClick={()=>libRef.current?.click()} style={btn(T.primary, T.onPrimary, {boxShadow:"0 6px 16px -10px "+T.primary})}>
+                從相簿選擇
+              </button>
+              <button onClick={()=>camRef.current?.click()} style={btn(T.surfaceAlt, T.ink2, {border:`1px solid ${T.hair}`})}>
+                直接拍照
+              </button>
+            </div>
           </div>
+        )}
+
+        {/* ── 報名號碼（選填） ── */}
+        <div style={{marginTop:16,paddingTop:16,borderTop:`1px solid ${T.hair2}`}}>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:".5px",color:T.muted,marginBottom:10}}>報名號碼（選填）</div>
+          {editNum ? (
+            <div style={{display:"flex",gap:7}}>
+              <input value={numInput} onChange={e=>setNumInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveNum()}
+                placeholder="輸入號碼…" autoFocus
+                style={{flex:1,border:`1.5px solid ${T.primary}`,borderRadius:9,padding:"9px 12px",fontSize:15,fontFamily:FONT_SANS,background:T.surfaceAlt,color:T.ink,outline:"none",letterSpacing:2}}/>
+              <button onClick={saveNum} style={btn(T.primary, T.onPrimary)}>儲存</button>
+              <button onClick={()=>setEditNum(false)} style={btn(T.surfaceAlt, T.muted)}>取消</button>
+            </div>
+          ) : (
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              {regNum
+                ? <div style={{fontFamily:FONT_SERIF,fontSize:22,fontWeight:700,color:T.primary,letterSpacing:4,flex:1}}>{regNum}</div>
+                : <div style={{fontSize:13,color:T.faint,flex:1}}>尚未輸入</div>
+              }
+              <button onClick={()=>{setNumInput(regNum);setEditNum(true);}} style={btn(T.surfaceAlt, T.ink2, {padding:"7px 12px"})}>
+                {regNum?"修改":"新增"}
+              </button>
+              {regNum && (
+                <button onClick={copyNum} style={btn(copied?"#E6F6F0":T.primaryTint, copied?"#0A6E50":T.primary, {padding:"7px 12px"})}>
+                  {copied?"已複製 ✓":"複製"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* ── 報到資訊 ── */}
+      <SectionHead>報到資訊</SectionHead>
+      <Card pad={6}>
+        {conf.registration && <InfoRow icon="clock" label="報到時間" value={conf.registration}/>}
+        <InfoRow icon="pin" label={conf.venue} value={conf.venueAddr||""}/>
+        <InfoRow icon="map" label="Google 地圖導航" link onClick={()=>window.open(conf.mapsUrl,"_blank")} last/>
+      </Card>
+
+      {/* ── 積分說明 ── */}
+      {conf.credits && <>
+        <SectionHead>積分說明</SectionHead>
+        <Card pad={14}>
+          <div style={{fontSize:13,color:T.ink2,lineHeight:1.7}}>{conf.credits}</div>
         </Card>
-      ) : (
-        <Card pad={20} style={{textAlign:"center"}}><div style={{display:"inline-flex",marginBottom:10}}><Icon name="refresh" size={28} color={T.faint}/></div><div style={{fontSize:13,color:T.muted,lineHeight:1.6}}>尚未執行更新。<br/>到期會自動觸發，或立即手動執行。</div></Card>
-      )}
-      <button onClick={runUpdate} disabled={isUpdating} style={{width:"100%",marginTop:14,border:"none",cursor:isUpdating?"default":"pointer",borderRadius:13,padding:"14px 0",fontSize:14,fontWeight:700,fontFamily:FONT_SANS,background:isUpdating?T.surfaceAlt:T.primary,color:isUpdating?T.faint:T.onPrimary,boxShadow:isUpdating?"none":"0 10px 24px -14px "+T.primary,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
-        {!isUpdating&&<Icon name="refresh" size={17} color={T.onPrimary}/>}
-        {isUpdating?"分析中…":latestResult?"立即重新檢查":"立即執行更新"}
-      </button>
+      </>}
+
+      {/* ── 聯絡 / 連結 ── */}
+      {conf.links.length > 0 && <>
+        <SectionHead>聯絡 / 連結</SectionHead>
+        <Card pad={6}>
+          {conf.links.map(([label,url],i)=>(
+            <InfoRow key={i} icon="link" label={label} link onClick={()=>window.open(url,"_blank")} last={i===conf.links.length-1}/>
+          ))}
+        </Card>
+      </>}
     </div>
   );
 }
@@ -962,8 +1072,7 @@ function App() {
   const [reminders, setRem]         = useState({});
   const [expanded, setExpanded]     = useState({});
   const [filter, setFilter]         = useState("all");
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [hasDot, setHasDot]         = useState(false);
+  const [hasDot, setHasDot]         = useState(false); // kept for future use
   const [toast, setToast]           = useState(null);
   const [uploading, setUploading]   = useState({});
   const [exportingDoc, setExportingDoc] = useState(false);
@@ -1118,43 +1227,6 @@ function App() {
     setUploading(p=>{const n={...p};delete n[id];return n;});
   }, [addMediaLink]);
 
-  // ── AI Update ─────────────────────────────────────────────────────────────
-  const fetchAndAnalyze = useCallback(async (label) => {
-    if (isUpdating) return;
-    const cfg=getCFG(); const conf=getCONF();
-    setIsUpdating(true); setTab("updates");
-    let fetched="";
-    for(const url of cfg.updateUrls||[]){
-      try{ const r=await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`); if(r.ok){const d=await r.json();const tmp=document.createElement("div");tmp.innerHTML=d.contents||"";fetched+=`\n=== ${url} ===\n`+(tmp.innerText||"").replace(/\s+/g," ").substring(0,2500);} }
-      catch{ fetched+=`\n=== ${url} ===\n[無法抓取]`; }
-    }
-    try {
-      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:`你是${cfg.specialistProfile}的大會助理。以下是${cfg.name}官網最新內容（${label}）：\n${fetched}\n\n請用繁體中文：\n【1.議程異動】比對重點場次（${cfg.keySessionsDesc}）是否有異動。若無說「目前無重大議程異動」。\n【2.新增講者】若無說「無新增講者」。\n【3.每日建議】針對${cfg.specialistProfile}，給每天最重要1–2個場次。\n【4.行前提示】一句話30字以內總結。\n請直接回答，不加前言。`}]})});
-      const data=await resp.json();
-      const result=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("\n")||"無法取得分析結果";
-      const now=new Date().toLocaleString("zh-TW",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
-      const cpKey=daysLeft<=1?"d1":daysLeft<=3?"d3":daysLeft<=7?"w1":"manual";
-      const upd={...loadLS(getUK()),[cpKey]:{time:now,label,result},lastCheck:{time:now,label}};
-      saveLS(getUK(),upd); setUpdates(upd); showToast("更新完成");
-    } catch {
-      const now=new Date().toLocaleString("zh-TW",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
-      const upd={...loadLS(getUK()),lastCheck:{time:now,label,error:true}};
-      saveLS(getUK(),upd); setUpdates(upd); showToast("更新失敗，請稍後重試");
-    }
-    setIsUpdating(false);
-  }, [isUpdating, daysLeft]);
-
-  useEffect(() => {
-    if (appLoading) return;
-    const conf=getCONF();
-    for(const cp of conf.checkpoints){
-      if(daysLeft<=cp.days&&daysLeft>0&&!loadLS(getUK())[cp.key]){
-        setHasDot(true);
-        const t=setTimeout(()=>fetchAndAnalyze(cp.label),3000);
-        return ()=>clearTimeout(t);
-      }
-    }
-  }, [appLoading]);
 
   // ── Exports ───────────────────────────────────────────────────────────────
   const doExportHTML = () => {
@@ -1180,22 +1252,21 @@ function App() {
   const notesBadge = Object.keys(notes).length + Object.values(media).reduce((a,m)=>a+(m.driveLinks?.length||0)+(m.videoLinks?.length||0),0);
 
   const S = {
-    daysLeft, tab, notes, media, reminders, updates, isUpdating, uploading, filter, expanded, curDay, syncStatus, accessToken, userEmail, tokenClient, exportingDoc,
+    daysLeft, tab, notes, media, reminders, uploading, filter, expanded, curDay, syncStatus, accessToken, userEmail, tokenClient, exportingDoc,
+    activeKey,
     setFilter, setCurDay,
     saveNote, addMediaLink, removeMediaLink, handleCapture,
     toggleReminder: i=>setRem(p=>({...p,[i]:!p[i]})),
     toggleExpand:   id=>setExpanded(p=>({...p,[id]:!p[id]})),
     goTo:       t=>setTab(t),
     goSession:  id=>{ pendingScroll.current=id; setExpanded(p=>({...p,[id]:true})); setTab("sched"); },
-    runUpdate:  ()=>fetchAndAnalyze("手動更新"),
     doExportHTML, doExportGoogleDoc,
     toast:      showToast,
-    // 切換會議
     onSwitchConference: ()=>setShowSwitcher(true),
     multiConf,
   };
 
-  const titles = { home:"會議助理", sched:"議程", notes:"我的筆記", updates:"行前更新" };
+  const titles = { home:"會議助理", sched:"議程", notes:"我的筆記", badge:"報到資訊" };
 
   return (
     <div style={{height:"100%",display:"flex",flexDirection:"column",background:T.paper,fontFamily:FONT_SANS,color:T.ink,position:"relative",overflow:"hidden"}}>
@@ -1203,33 +1274,32 @@ function App() {
       {/* header */}
       <div style={{paddingTop:"max(16px, env(safe-area-inset-top, 44px))",paddingBottom:10,paddingLeft:16,paddingRight:16,background:T.paper,display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexShrink:0,position:"relative",zIndex:6}}>
         <div style={{fontFamily:FONT_SERIF,fontSize:21,fontWeight:700,color:T.ink,letterSpacing:".3px"}}>{titles[tab]}</div>
-        <button onClick={()=>{setTab("updates");setHasDot(false);}} style={{display:"inline-flex",alignItems:"center",gap:5,border:"none",cursor:"pointer",background:T.primaryTint,color:T.primary,borderRadius:999,padding:"5px 11px",fontSize:12,fontWeight:700,fontFamily:FONT_SANS,whiteSpace:"nowrap",flexShrink:0,position:"relative"}}>
+        <button onClick={()=>setTab("badge")} style={{display:"inline-flex",alignItems:"center",gap:5,border:"none",cursor:"pointer",background:T.primaryTint,color:T.primary,borderRadius:999,padding:"5px 11px",fontSize:12,fontWeight:700,fontFamily:FONT_SANS,whiteSpace:"nowrap",flexShrink:0}}>
           <span style={{width:6,height:6,borderRadius:"50%",background:T.primary}}/>
           開課倒數 {daysLeft} 天
-          {hasDot && <span style={{position:"absolute",top:-2,right:-2,width:8,height:8,borderRadius:"50%",background:"#EF4444",border:"1.5px solid "+T.paper}}/>}
         </button>
       </div>
 
       {/* scroll area */}
       <div ref={scrollRef} style={{flex:1,overflowY:"auto",overflowX:"hidden",WebkitOverflowScrolling:"touch"}}>
         <div style={{paddingBottom:8}}>
-          {tab==="home"    && <HomeScreen S={S}/>}
-          {tab==="sched"   && <ScheduleScreen S={S}/>}
-          {tab==="notes"   && <NotesScreen S={S}/>}
-          {tab==="updates" && <UpdatesScreen S={S}/>}
+          {tab==="home"  && <HomeScreen S={S}/>}
+          {tab==="sched" && <ScheduleScreen S={S}/>}
+          {tab==="notes" && <NotesScreen S={S}/>}
+          {tab==="badge" && <BadgeScreen S={S}/>}
         </div>
       </div>
 
       {/* bottom nav */}
       <div style={{flexShrink:0,display:"flex",paddingTop:8,paddingBottom:"max(20px, env(safe-area-inset-bottom, 0px))",background:"rgba(255,255,255,.92)",backdropFilter:"blur(16px) saturate(180%)",WebkitBackdropFilter:"blur(16px) saturate(180%)",borderTop:`1px solid ${T.hair}`,position:"relative",zIndex:6}}>
-        {[["home","home","首頁"],["sched","calendar","議程"],["notes","note","筆記"],["updates","refresh","更新"]].map(([k,icon,label])=>{
+        {[["home","home","首頁"],["sched","calendar","議程"],["notes","note","筆記"],["badge","badge","報到"]].map(([k,icon,label])=>{
           const on=tab===k;
-          const badge=k==="notes"?notesBadge:(k==="updates"&&hasDot)?1:0;
+          const badge=k==="notes"?notesBadge:0;
           return (
-            <button key={k} onClick={()=>{setTab(k);if(k==="updates")setHasDot(false);}} style={{flex:1,border:"none",background:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"2px 0",fontFamily:FONT_SANS,position:"relative"}}>
+            <button key={k} onClick={()=>setTab(k)} style={{flex:1,border:"none",background:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"2px 0",fontFamily:FONT_SANS,position:"relative"}}>
               <div style={{position:"relative"}}>
                 <Icon name={icon} size={23} color={on?T.primary:T.faint} stroke={on?2:1.7}/>
-                {badge>0 && <span style={{position:"absolute",top:-3,right:-8,minWidth:15,height:15,borderRadius:999,background:k==="updates"?"#EF4444":T.gold,color:"#fff",fontSize:9.5,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>{k==="updates"?"!":badge}</span>}
+                {badge>0 && <span style={{position:"absolute",top:-3,right:-8,minWidth:15,height:15,borderRadius:999,background:T.gold,color:"#fff",fontSize:9.5,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>{badge}</span>}
               </div>
               <span style={{fontSize:10.5,fontWeight:on?700:500,color:on?T.primary:T.muted}}>{label}</span>
             </button>
