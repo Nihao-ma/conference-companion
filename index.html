@@ -1,3 +1,6 @@
+https://raw.githubusercontent.com/Nihao-ma/conference-companion/74f6347/index.html
+→ https://raw.githubusercontent.com/Nihao-ma/conference-companion/74f6347/index.html
+Content-Type: text/plain; charset=utf-8
 
 <!DOCTYPE html>
 <html lang="zh-TW">
@@ -7,19 +10,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="會議助理">
-<meta name="theme-color" content="#1E1B4B">
+<meta name="theme-color" content="#312E81">
 <title>Conference Companion</title>
 <link rel="apple-touch-icon" sizes="192x192" href="icon.png">
 <link rel="manifest" href="manifest.json">
-
-<!-- ★ 會議設定檔 — ?conf=ESHG2026 載入對應檔案，無參數則用 conference.js -->
-<script>
-(function() {
-  var conf = new URLSearchParams(location.search).get('conf');
-  var src = conf ? 'conference_' + conf + '.js' : 'conference.js';
-  document.write('<script src="' + src + '"><\/script>');
-})();
-</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
 
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async></script>
@@ -29,1056 +26,1345 @@
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#FAFAF8;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;-webkit-text-size-adjust:100%}
-  ::-webkit-scrollbar{display:none}
-  input,button,textarea,select{font-family:inherit;-webkit-appearance:none}
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #F4F2EC; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+  body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  #root { width: 100%; height: 100%; }
+  ::-webkit-scrollbar { display: none; }
+  * { scrollbar-width: none; }
+  input, button, textarea, select { font-family: inherit; -webkit-appearance: none; }
+  textarea:focus { outline: none; }
+  @keyframes cc-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .cc-spin { animation: cc-spin .8s linear infinite; }
+  @keyframes cc-slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .cc-sheet { animation: cc-slide-up .28s cubic-bezier(.32,.72,0,1); }
 </style>
 </head>
 <body>
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
-// ─── CONFIG ── 填入您的 Google Client ID ────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ★ 會議登錄表 — 新增會議時在這裡加一行
+// ══════════════════════════════════════════════════════════════════════════════
+const CONFERENCE_REGISTRY = [
+  { key: "遺傳罕見疾病研習_202606", file: "conference_遺傳罕見疾病研習_202606.js" },
+  { key: "ESHG2026",               file: "conference_ESHG2026.js" },
+];
+
+// ─── Google OAuth ──────────────────────────────────────────────────────────────
 const GOOGLE_CLIENT_ID = "609511324758-dhgjq9r8v8jr4s4ktfm3eb83ani6ea2n.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents";
 
-// ─── 讀取會議設定 ──────────────────────────────────────────────────────────────
-const C_CFG = window.CONFERENCE_CONFIG;
-const SESSIONS     = C_CFG.sessions;
-const DAYS         = C_CFG.days;
-const CHECKPOINTS  = C_CFG.checkpoints;
-
-// ─── LOCAL STORAGE（以會議 Drive 資料夾名稱為 key，不同會議互不干擾）──────────
-const _pfx = C_CFG.driveFolderName.toLowerCase();
-const NK = `${_pfx}_notes`;
-const MK = `${_pfx}_media`;
-const UK = `${_pfx}_upd`;
-const load    = k => { try { return JSON.parse(localStorage.getItem(k) || "{}"); } catch { return {}; } };
-const persist = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
-
-// ─── SESSION INDEX ─────────────────────────────────────────────────────────────
-const BADGE = {
-  edu:  { bg: "#EEF0FD", c: "#3730A3" },
-  sym:  { bg: "#ECFDF5", c: "#065F46" },
-  con:  { bg: "#EFF6FF", c: "#1E40AF" },
-  int:  { bg: "#FFFBEB", c: "#92400E" },
-  pl:   { bg: "#FFF1EE", c: "#7C2D12" },
-  corp: { bg: "#F5F5F4", c: "#44403C" },
-  soc:  { bg: "#FDF2F8", c: "#701A75" },
+// ─── DESIGN TOKENS (靛藍主題) ─────────────────────────────────────────────────
+const T = {
+  paper: "#F4F2EC", surface: "#FFFFFF", surfaceAlt: "#FBFAF6",
+  ink: "#1B1930", ink2: "#4B4960", muted: "#8A8896", faint: "#B8B6BE",
+  hair: "#E8E5DC", hair2: "#F0EEE7",
+  primary: "#4338CA", primaryDeep: "#312E81", primaryInk: "#1E1B4B",
+  primaryTint: "#EEF0FD", onPrimary: "#FFFFFF",
+  heroFrom: "#312E81", heroTo: "#4F46E5",
+  gold: "#9A6B00", goldTint: "#FCF3DC",
+  r: 20,
 };
+const FONT_SANS  = '"Noto Sans TC", -apple-system, system-ui, sans-serif';
+const FONT_SERIF = '"Noto Serif TC", Georgia, serif';
 
-function buildIdx() {
-  const idx = {};
-  for (const [day, blocks] of Object.entries(SESSIONS))
-    for (const bl of blocks)
-      if (bl.items) for (const it of bl.items)
-        idx[it.id] = { title: it.title, day: DAYS[day], time: bl.time };
-  return idx;
-}
+// ─── 全域可變的「當前會議」(conference switching 更新這兩個) ──────────────────
+let _C_CFG = null;   // 原始 CONFERENCE_CONFIG
+let _CONF  = null;   // 轉換後的 CONF 物件（供所有元件讀取）
 
-// ─── DRIVE API ─────────────────────────────────────────────────────────────────
-async function driveGet(token, path, params = "") {
-  const r = await fetch(`https://www.googleapis.com/drive/v3/${path}${params}`, {
-    headers: { Authorization: `Bearer ${token}` }
+// getter 方便取用
+const getCFG  = () => _C_CFG;
+const getCONF = () => _CONF;
+// localStorage 鍵由 driveFolderName 決定，每個會議獨立
+const getNK = () => `${(_C_CFG?.driveFolderName||'cc').toLowerCase()}_notes`;
+const getMK = () => `${(_C_CFG?.driveFolderName||'cc').toLowerCase()}_media`;
+const getUK = () => `${(_C_CFG?.driveFolderName||'cc').toLowerCase()}_upd`;
+
+// ─── LOCAL STORAGE ─────────────────────────────────────────────────────────────
+const loadLS = k => { try { return JSON.parse(localStorage.getItem(k)||"{}"); } catch { return {}; } };
+const saveLS = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 動態載入會議設定檔
+// ══════════════════════════════════════════════════════════════════════════════
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    delete window.CONFERENCE_CONFIG;
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload  = () => resolve(window.CONFERENCE_CONFIG || null);
+    s.onerror = () => reject(new Error('無法載入: ' + src));
+    document.head.appendChild(s);
   });
-  if (!r.ok) throw new Error(`Drive ${path} ${r.status}`);
-  return r.json();
 }
 
+async function loadAllConferences() {
+  const configs = {};
+  for (const { key, file } of CONFERENCE_REGISTRY) {
+    try {
+      const cfg = await loadScript(file);
+      if (cfg) configs[key] = cfg;
+    } catch(e) { console.warn(e.message); }
+  }
+  // 備援：若都失敗則嘗試 conference.js
+  if (!Object.keys(configs).length) {
+    try { const cfg = await loadScript('conference.js'); if (cfg) configs['default'] = cfg; } catch {}
+  }
+  return configs;
+}
+
+// 自動選最近的會議：優先選最近的未來場次，若全部過去則選最近已結束的
+function autoSelectConference(configs) {
+  const urlConf = new URLSearchParams(location.search).get('conf');
+  if (urlConf && configs[urlConf]) return urlConf;
+
+  const now = new Date();
+  let bestKey = Object.keys(configs)[0];
+  let bestScore = -Infinity;
+
+  for (const [key, cfg] of Object.entries(configs)) {
+    const diff = new Date(cfg.startDate) - now; // 正 = 未來
+    // 未來場次優先，越近分數越高；過去場次其次
+    const score = diff >= 0 ? 1e15 - diff : diff;
+    if (score > bestScore) { bestScore = score; bestKey = key; }
+  }
+  return bestKey;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 將 CONFERENCE_CONFIG 結構轉換成 UI 用的 CONF 物件
+// ══════════════════════════════════════════════════════════════════════════════
+function buildCONF(cfg) {
+  const DAY_KEYS = Object.keys(cfg.sessions || {});
+  const ALL_BLOCKS = {};
+
+  for (const dk of DAY_KEYS) {
+    const blocks = [];
+    for (const bl of cfg.sessions[dk] || []) {
+      if (bl.brk) {
+        const t = (bl.time||"").split(/[–—]/)[0].trim();
+        blocks.push({ time: t, kind: "mark", label: bl.brk.replace(/^[📋☕👋⏰🍱🔔📅]\s*/,""), note:"" });
+      } else if (bl.items) {
+        const parts = (bl.time||"").split(/[–—]/);
+        const st = parts[0].trim(), et = parts[1]?.trim()||"";
+        for (const it of bl.items) {
+          const pinM = (it.detail||"").match(/[⭐★]\s*(.+)$/m);
+          blocks.push({
+            time: st, end: et, id: it.id, b: it.b||"edu",
+            title: it.title, speakers: it.speakers||[], tags: it.tags||[],
+            detail: (it.detail||"").replace(/^[⭐★].*$/mg,"").trim(),
+            pin: pinM ? pinM[1].trim() : "",
+          });
+        }
+      }
+    }
+    ALL_BLOCKS[dk] = blocks;
+  }
+
+  return {
+    name: cfg.name,
+    org:  (cfg.subtitle||"").split("・")[0] || cfg.name,
+    dates: cfg.dates,
+    startDate: cfg.startDate,
+    venue: (cfg.venue||cfg.location||"").split("，")[0],
+    venueAddr: (cfg.venue||cfg.location||"").split("，")[1]||"",
+    mapsUrl: cfg.mapsUrl,
+    registration: cfg.registrationTimes?.[0]||"",
+    credits: (cfg.personalReminders||[]).find(r=>r.includes("積分"))||"",
+    reminders: cfg.personalReminders||[],
+    links: cfg.links||[],
+    checkpoints: cfg.checkpoints||[],
+    days: cfg.days||{},
+    dayKeys: DAY_KEYS,
+    allBlocks: ALL_BLOCKS,
+    badges: {
+      edu:{ bg:"#EEF0FD", fg:"#3730A3", label:"講座" },
+      int:{ bg:"#FFF6E8", fg:"#9A5B00", label:"討論" },
+      sym:{ bg:"#ECFDF5", fg:"#065F46", label:"研討" },
+      con:{ bg:"#EFF6FF", fg:"#1E40AF", label:"場次" },
+      pl: { bg:"#FFF1EE", fg:"#7C2D12", label:"專題" },
+      corp:{ bg:"#F5F5F4",fg:"#44403C", label:"場次" },
+    },
+    tags: {
+      star:    { bg:"#FCF3DC",fg:"#9A6B00",glyph:"★",  label:"推薦" },
+      prenatal:{ bg:"#E6F6F0",fg:"#0A6E50",glyph:"🧬", label:"產前" },
+      cyto:    { bg:"#E8F1FF",fg:"#1E4FA8",glyph:"🔬", label:"細胞遺傳" },
+      cardio:  { bg:"#FEE2E2",fg:"#991B1B",glyph:"❤",  label:"心臟" },
+      neuro:   { bg:"#F3E8FF",fg:"#6B21A8",glyph:"🧠", label:"神經" },
+    },
+  };
+}
+
+// 啟用某個會議（更新全域可變變數）
+function activateConference(cfg) {
+  _C_CFG = cfg;
+  _CONF  = buildCONF(cfg);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DRIVE API (保留原版)
+// ══════════════════════════════════════════════════════════════════════════════
+async function driveGet(token, path, params="") {
+  const r = await fetch(`https://www.googleapis.com/drive/v3/${path}${params}`,{headers:{Authorization:`Bearer ${token}`}});
+  if (!r.ok) throw new Error(`Drive ${path} ${r.status}`); return r.json();
+}
 async function findFile(token, name, parentId) {
-  const safe = name.replace(/'/g, "\\'");
-  let q = `name='${safe}' and trashed=false`;
-  if (parentId) q += ` and '${parentId}' in parents`;
-  const d = await driveGet(token, "files", `?q=${encodeURIComponent(q)}&fields=files(id,name,webViewLink)`);
-  return d.files?.[0] || null;
+  const safe = name.replace(/'/g,"\\'");
+  let q=`name='${safe}' and trashed=false`;
+  if (parentId) q+=` and '${parentId}' in parents`;
+  const d=await driveGet(token,"files",`?q=${encodeURIComponent(q)}&fields=files(id,name,webViewLink)`);
+  return d.files?.[0]||null;
 }
-
 async function createFolder(token, name, parentId) {
-  const meta = { name, mimeType: "application/vnd.google-apps.folder" };
-  if (parentId) meta.parents = [parentId];
-  const r = await fetch("https://www.googleapis.com/drive/v3/files", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(meta)
-  });
-  if (!r.ok) throw new Error("createFolder failed");
-  return r.json();
+  const meta={name,mimeType:"application/vnd.google-apps.folder"};
+  if (parentId) meta.parents=[parentId];
+  const r=await fetch("https://www.googleapis.com/drive/v3/files",{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(meta)});
+  if (!r.ok) throw new Error("createFolder failed"); return r.json();
 }
-
-async function getOrCreateFolder(token, name, parentId) {
-  return (await findFile(token, name, parentId)) || (await createFolder(token, name, parentId));
+const getOrCreateFolder=(t,n,p)=>findFile(t,n,p).then(f=>f||createFolder(t,n,p));
+async function readJsonFile(token,fileId){
+  const r=await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{headers:{Authorization:`Bearer ${token}`}});
+  if (!r.ok) return null; return r.json();
 }
-
-async function readJsonFile(token, fileId) {
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!r.ok) return null;
-  return r.json();
+async function writeJsonFile(token,name,data,parentId,existingId){
+  const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
+  const metaObj={name,mimeType:"application/json"};
+  if (parentId&&!existingId) metaObj.parents=[parentId];
+  const form=new FormData();
+  form.append("metadata",new Blob([JSON.stringify(metaObj)],{type:"application/json"}));
+  form.append("file",blob);
+  const url=existingId?`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`:"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+  const r=await fetch(url,{method:existingId?"PATCH":"POST",headers:{Authorization:`Bearer ${token}`},body:form});
+  if (!r.ok) throw new Error("writeJsonFile failed"); return r.json();
 }
-
-async function writeJsonFile(token, name, data, parentId, existingId) {
-  const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
-  const metaObj = { name, mimeType: "application/json" };
-  if (parentId && !existingId) metaObj.parents = [parentId];
-  const form = new FormData();
-  form.append("metadata", new Blob([JSON.stringify(metaObj)], { type: "application/json" }));
-  form.append("file", blob);
-  const url = existingId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
-    : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
-  const r = await fetch(url, {
-    method: existingId ? "PATCH" : "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: form
-  });
-  if (!r.ok) throw new Error("writeJsonFile failed");
-  return r.json();
-}
-
-async function uploadMediaFile(token, file, sessionTitle) {
-  // 每個大會一個獨立頂層資料夾（e.g. ESHG2026）
-  const rootFolder = await getOrCreateFolder(token, C_CFG.driveFolderName, null);
-  const folderName = sessionTitle.replace(/[★\*\/\\:]/g, "").trim().substring(0, 40);
-  const sessionFolder = await getOrCreateFolder(token, folderName, rootFolder.id);
-  const ts = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" }).replace(":", "");
-  const meta = JSON.stringify({ name: `${ts}_${file.name}`, parents: [sessionFolder.id] });
-  const form = new FormData();
-  form.append("metadata", new Blob([meta], { type: "application/json" }));
-  form.append("file", file);
-  const r = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,name",
-    { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
-  );
+async function uploadMediaFile(token,file,sessionTitle){
+  const cfg=getCFG();
+  const rootFolder=await getOrCreateFolder(token,cfg.driveFolderName,null);
+  const folderName=sessionTitle.replace(/[★\*\/\\:]/g,"").trim().substring(0,40);
+  const sessionFolder=await getOrCreateFolder(token,folderName,rootFolder.id);
+  const ts=new Date().toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}).replace(":","");
+  const meta=JSON.stringify({name:`${ts}_${file.name}`,parents:[sessionFolder.id]});
+  const form=new FormData();
+  form.append("metadata",new Blob([meta],{type:"application/json"}));
+  form.append("file",file);
+  const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,name",{method:"POST",headers:{Authorization:`Bearer ${token}`},body:form});
   if (!r.ok) throw new Error("Upload failed");
-  const d = await r.json();
-  await fetch(`https://www.googleapis.com/drive/v3/files/${d.id}/permissions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ role: "reader", type: "anyone" })
-  });
+  const d=await r.json();
+  await fetch(`https://www.googleapis.com/drive/v3/files/${d.id}/permissions`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({role:"reader",type:"anyone"})});
   return d;
 }
-
-// ─── GOOGLE DOCS EXPORT ────────────────────────────────────────────────────────
-async function exportToGoogleDoc(token, notes, media) {
-  const docTitle = `${C_CFG.name} 會議筆記・${C_CFG.location.split("，")[0]}`;
-
+async function exportToGoogleDoc(token,notes,media){
+  const cfg=getCFG(); const conf=getCONF();
   // Step 1: 建立 Google Doc
-  const r = await fetch("https://docs.googleapis.com/v1/documents", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ title: docTitle })
-  });
+  const r=await fetch("https://docs.googleapis.com/v1/documents",{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({title:`${cfg.name} 會議筆記`})});
   if (!r.ok) throw new Error("無法建立 Google Doc");
-  const doc = await r.json();
-  const docId = doc.documentId;
-
-  // Step 2: 移到會議資料夾（例如 ESHG2026/）
-  try {
-    const rootFolder = await getOrCreateFolder(token, C_CFG.driveFolderName, null);
-    if (rootFolder?.id) {
-      await fetch(
-        `https://www.googleapis.com/drive/v3/files/${docId}?addParents=${rootFolder.id}&removeParents=root`,
-        { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({}) }
-      );
+  const {documentId}=await r.json();
+  // Step 2: 移到會議資料夾
+  try{
+    const rootFolder=await getOrCreateFolder(token,cfg.driveFolderName,null);
+    if(rootFolder?.id){
+      await fetch(`https://www.googleapis.com/drive/v3/files/${documentId}?addParents=${rootFolder.id}&removeParents=root`,{method:"PATCH",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({})});
     }
-  } catch(e) { console.warn("Move to folder failed:", e); }
-
+  }catch(e){console.warn("Move to folder failed:",e);}
   // Step 3: 從 Drive URL 取出 fileId
-  function extractFileId(url) {
-    const m = url.match(/\/d\/([a-zA-Z0-9_-]+)/) || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-    return m ? m[1] : null;
+  function extractFileId(url){const m=url.match(/\/d\/([a-zA-Z0-9_-]+)/)||url.match(/[?&]id=([a-zA-Z0-9_-]+)/);return m?m[1]:null;}
+  // Step 4: 建立 requests（文字 + 嵌入圖片）
+  const requests=[]; let idx=1;
+  function addText(text){if(!text)return;requests.push({insertText:{location:{index:idx},text}});idx+=text.length;}
+  function addImage(fileId){
+    requests.push({insertInlineImage:{location:{index:idx},uri:`https://drive.google.com/uc?export=view&id=${fileId}`,objectSize:{height:{magnitude:220,unit:"PT"},width:{magnitude:300,unit:"PT"}}}});
+    idx+=1;
   }
-
-  // Step 4: 逐段建立 requests（文字 + 嵌入圖片）
-  const requests = [];
-  let idx = 1; // Google Docs 從 index 1 開始
-
-  function addText(text) {
-    if (!text) return;
-    requests.push({ insertText: { location: { index: idx }, text } });
-    idx += text.length;
-  }
-
-  function addImage(fileId) {
-    // 照片上傳時已設為 anyoneWithLink，可直接嵌入
-    const uri = `https://drive.google.com/uc?export=view&id=${fileId}`;
-    requests.push({
-      insertInlineImage: {
-        location: { index: idx },
-        uri,
-        objectSize: {
-          height: { magnitude: 220, unit: "PT" },
-          width:  { magnitude: 300, unit: "PT" }
-        }
-      }
-    });
-    idx += 1; // 圖片佔 1 個 index 位置
-  }
-
-  // 標題區
-  addText(`${C_CFG.name} 會議筆記\n`);
-  addText(`${C_CFG.subtitle}\n`);
-  addText(`匯出日期：${new Date().toLocaleDateString("zh-TW", { year: "numeric", month: "long", day: "numeric" })}\n\n`);
-
-  // 各天各 Session
-  for (const [day, blocks] of Object.entries(SESSIONS)) {
-    let dayHasContent = false;
-    for (const bl of blocks) {
-      if (!bl.items) continue;
-      for (const it of bl.items) {
-        if (notes[it.id] || media[it.id]) { dayHasContent = true; break; }
-      }
-      if (dayHasContent) break;
-    }
-    if (!dayHasContent) continue;
-
-    addText(`═══════════════════════════════════\n${DAYS[day]}\n═══════════════════════════════════\n\n`);
-
-    for (const bl of blocks) {
-      if (!bl.items) continue;
-      for (const it of bl.items) {
-        const note = notes[it.id];
-        const med  = media[it.id];
-        if (!note && !med) continue;
-
+  addText(`${cfg.name} 會議筆記\n`);
+  addText(`${cfg.subtitle||""}\n`);
+  addText(`匯出：${new Date().toLocaleDateString("zh-TW",{year:"numeric",month:"long",day:"numeric"})}\n\n`);
+  for(const[day,blocks]of Object.entries(cfg.sessions||{})){
+    let hasContent=false;
+    for(const bl of blocks){if(!bl.items)continue;for(const it of bl.items){if(notes[it.id]||media[it.id]){hasContent=true;break;}}if(hasContent)break;}
+    if(!hasContent)continue;
+    addText(`═══════════════════════════════════\n${conf?.days?.[day]||day}\n═══════════════════════════════════\n\n`);
+    for(const bl of blocks){
+      if(!bl.items)continue;
+      for(const it of bl.items){
+        const note=notes[it.id]; const med=media[it.id]||{};
+        if(!note&&!med.driveLinks?.length&&!med.videoLinks?.length)continue;
         addText(`▌ ${bl.time}  ${it.title}\n`);
-        if (it.speakers?.length) addText(`   講者：${it.speakers.join(" / ")}\n`);
-
-        if (note) {
-          addText(`\n📝 筆記：\n${note}\n`);
-        }
-
-        if (med?.driveLinks?.length) {
+        if(it.speakers?.length)addText(`   講者：${it.speakers.join(" / ")}\n`);
+        if(note){addText(`\n📝 筆記：\n${note}\n`);}
+        if(med.driveLinks?.length){
           addText(`\n📷 照片：\n`);
-          for (const lk of med.driveLinks) {
-            const fileId = extractFileId(lk.url);
-            if (fileId) {
-              addImage(fileId);
-              addText("\n");
-            } else {
-              addText(`   ${lk.label}：${lk.url}\n`);
-            }
-          }
+          for(const lk of med.driveLinks){const fid=extractFileId(lk.url);if(fid){addImage(fid);addText("\n");}else addText(`   ${lk.label}：${lk.url}\n`);}
         }
-
-        if (med?.videoLinks?.length) {
-          addText(`\n🎥 影片：\n`);
-          for (const vl of med.videoLinks) addText(`   ${vl.label}：${vl.url}\n`);
-        }
-
+        if(med.videoLinks?.length){addText(`\n🎥 影片：\n`);for(const vl of med.videoLinks)addText(`   ${vl.label}：${vl.url}\n`);}
         addText("\n");
       }
     }
   }
-
-  // Step 5: 一次送出所有 requests（文字 + 圖片）
-  const batchResp = await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ requests })
-  });
-
-  if (!batchResp.ok) {
-    // 圖片嵌入失敗時，退回純文字版本
+  // Step 5: 送出（失敗時退回純文字）
+  const batchResp=await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({requests})});
+  if(!batchResp.ok){
     console.warn("batchUpdate with images failed, retrying text-only");
-    const textOnlyRequests = requests.filter(req => req.insertText);
-    await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ requests: textOnlyRequests })
-    });
+    await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({requests:requests.filter(req=>req.insertText)})});
   }
-
-  return `https://docs.google.com/document/d/${docId}/edit`;
+  return `https://docs.google.com/document/d/${documentId}/edit`;
 }
-
-// ─── EXPORT HTML ───────────────────────────────────────────────────────────────
-function generateExportHTML(notes, media) {
-  const now = new Date().toLocaleDateString("zh-TW", { year: "numeric", month: "long", day: "numeric" });
-  const sections = [];
-  for (const [day, blocks] of Object.entries(SESSIONS)) {
-    const dayItems = [];
-    for (const bl of blocks) {
-      if (!bl.items) continue;
-      for (const it of bl.items) {
-        const note = notes[it.id];
-        const med  = media[it.id] || {};
-        if (!note && !med.driveLinks?.length && !med.videoLinks?.length) continue;
-        const bc = BADGE[it.b] || BADGE.corp;
-        let h = `<div class="si"><div class="sh"><span class="badge" style="background:${bc.bg};color:${bc.c}">${it.l}</span><div><div class="stl">${bl.time}</div><div class="stt">${it.title}</div>${it.speakers?.length ? `<div class="spk">${it.speakers.join(" · ")}</div>` : ""}</div></div>`;
-        if (note) h += `<div class="nb"><div class="nl">📝 筆記</div><div class="nt">${note.replace(/\n/g, "<br>")}</div></div>`;
-        if (med.driveLinks?.length) { h += `<div class="mb"><div class="nl">📷 Drive 照片</div>`; for (const lk of med.driveLinks) h += `<a class="dl" href="${lk.url}" target="_blank">📷 ${lk.label}</a>`; h += `</div>`; }
-        if (med.videoLinks?.length) { h += `<div class="mb"><div class="nl">🎬 影片</div>`; for (const vl of med.videoLinks) h += `<a class="dl" href="${vl.url}" target="_blank">▶ ${vl.label}</a>`; h += `</div>`; }
-        h += `</div>`;
-        dayItems.push(h);
+function generateExportHTML(notes,media){
+  const conf=getCONF(); const cfg=getCFG();
+  const now=new Date().toLocaleDateString("zh-TW",{year:"numeric",month:"long",day:"numeric"});
+  const sections=[];
+  for(const[day,blocks]of Object.entries(cfg.sessions||{})){
+    const items=[];
+    for(const bl of blocks){
+      if(!bl.items) continue;
+      for(const it of bl.items){
+        const note=notes[it.id];const med=media[it.id]||{};
+        if(!note&&!med.driveLinks?.length&&!med.videoLinks?.length) continue;
+        const bc=conf.badges[it.b]||conf.badges.edu;
+        let h=`<div class="si"><div class="sh"><span class="badge" style="background:${bc.bg};color:${bc.fg}">${bc.label}</span><div><div class="stl">${bl.time}</div><div class="stt">${it.title}</div>${it.speakers?.length?`<div class="spk">${it.speakers.join(" · ")}</div>`:""}</div></div>`;
+        if(note) h+=`<div class="nb"><div class="nl">📝 筆記</div><div class="nt">${note.replace(/\n/g,"<br>")}</div></div>`;
+        if(med.driveLinks?.length){h+=`<div class="mb"><div class="nl">📷</div>`;for(const lk of med.driveLinks)h+=`<a class="dl" href="${lk.url}" target="_blank">📷 ${lk.label}</a>`;h+=`</div>`;}
+        if(med.videoLinks?.length){h+=`<div class="mb"><div class="nl">🎥</div>`;for(const vl of med.videoLinks)h+=`<a class="dl" href="${vl.url}" target="_blank">▶ ${vl.label}</a>`;h+=`</div>`;}
+        h+=`</div>`;items.push(h);
       }
     }
-    if (dayItems.length) sections.push(`<div class="ds"><div class="dh">${DAYS[day]}</div>${dayItems.join("")}</div>`);
+    if(items.length) sections.push(`<div class="ds"><div class="dh">${conf.days[day]||day}</div>${items.join("")}</div>`);
   }
-  const noteCount  = Object.keys(notes).length;
-  const mediaCount = Object.values(media).reduce((a, m) => a + (m.driveLinks?.length || 0) + (m.videoLinks?.length || 0), 0);
-  return `<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${C_CFG.name} 會議筆記</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#FAFAF8;color:#1C1917}
-.cov{background:linear-gradient(135deg,#1E1B4B,#4338CA);color:#fff;padding:52px 36px 44px}.ct{font-size:34px;font-weight:700;margin-bottom:6px}
-.cs{font-size:14px;opacity:.7;margin-bottom:20px}.cm{font-size:12px;opacity:.5;line-height:2}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:720px;margin:32px auto 0;padding:0 20px}
-.stat{background:#fff;border:1px solid #E7E5E4;border-radius:10px;padding:14px;text-align:center}
-.sn{font-size:26px;font-weight:700;color:#312E81}.sl{font-size:11px;color:#78716C;margin-top:2px}
-.con{max-width:720px;margin:0 auto;padding:32px 20px 80px}
-.ds{margin-bottom:36px}.dh{font-size:18px;font-weight:700;color:#312E81;padding:10px 0;border-bottom:2px solid #312E81;margin-bottom:16px}
-.si{background:#fff;border:1px solid #E7E5E4;border-radius:12px;padding:18px;margin-bottom:12px;page-break-inside:avoid}
-.sh{display:flex;gap:10px;align-items:flex-start;margin-bottom:12px}.badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;flex-shrink:0;margin-top:2px}
-.stl{font-size:10px;color:#A8A29E}.stt{font-size:14px;font-weight:600;color:#1C1917;line-height:1.4}.spk{font-size:11px;color:#78716C;margin-top:3px}
-.nb{background:#FAFAF8;border-left:3px solid #312E81;border-radius:0 6px 6px 0;padding:10px 12px;margin-bottom:8px}
-.nl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A8A29E;margin-bottom:5px}
-.nt{font-size:13px;color:#292524;line-height:1.7;white-space:pre-wrap}.mb{margin-bottom:8px}
-.dl{display:inline-flex;background:#EEF0FD;color:#3730A3;border-radius:6px;padding:5px 10px;font-size:12px;text-decoration:none;margin:2px}
-.footer{text-align:center;padding:24px;font-size:11px;color:#A8A29E;border-top:1px solid #E7E5E4}
-@media print{.cov{-webkit-print-color-adjust:exact;print-color-adjust:exact}.si{break-inside:avoid}}
-</style></head><body>
-<div class="cov"><div class="ct">${C_CFG.name}</div><div class="cs">${C_CFG.subtitle}</div>
-<div class="cm">📅 ${C_CFG.dates}　📍 ${C_CFG.venue?.split("，")[0] || ""}　🗓 匯出於 ${now}</div></div>
-<div class="stats"><div class="stat"><div class="sn">${noteCount}</div><div class="sl">則文字筆記</div></div><div class="stat"><div class="sn">${mediaCount}</div><div class="sl">個媒體連結</div></div><div class="stat"><div class="sn">${sections.length}</div><div class="sl">天有記錄</div></div></div>
-<div class="con">${sections.length ? sections.join("") : `<div style="text-align:center;padding:60px;color:#bbb">📭 尚無筆記</div>`}</div>
-<div class="footer">${C_CFG.name} · Conference Companion · ${now}</div>
-</body></html>`;
+  const nc=Object.keys(notes).length,mc=Object.values(media).reduce((a,m)=>a+(m.driveLinks?.length||0)+(m.videoLinks?.length||0),0);
+  return `<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${cfg.name} 會議筆記</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#FAFAF8;color:#1C1917}.cov{background:linear-gradient(135deg,#312E81,#4338CA);color:#fff;padding:52px 36px 44px}.ct{font-size:34px;font-weight:700;margin-bottom:6px}.cs{font-size:14px;opacity:.7}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:720px;margin:32px auto 0;padding:0 20px}.stat{background:#fff;border:1px solid #E7E5E4;border-radius:10px;padding:14px;text-align:center}.sn{font-size:26px;font-weight:700;color:#312E81}.sl{font-size:11px;color:#78716C;margin-top:2px}.con{max-width:720px;margin:0 auto;padding:32px 20px 80px}.ds{margin-bottom:36px}.dh{font-size:18px;font-weight:700;color:#312E81;padding:10px 0;border-bottom:2px solid #312E81;margin-bottom:16px}.si{background:#fff;border:1px solid #E7E5E4;border-radius:12px;padding:18px;margin-bottom:12px}.sh{display:flex;gap:10px;align-items:flex-start;margin-bottom:12px}.badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;flex-shrink:0}.stl{font-size:10px;color:#A8A29E}.stt{font-size:14px;font-weight:600;line-height:1.4}.spk{font-size:11px;color:#78716C;margin-top:3px}.nb{background:#FAFAF8;border-left:3px solid #312E81;border-radius:0 6px 6px 0;padding:10px 12px;margin-bottom:8px}.nl{font-size:10px;font-weight:700;color:#A8A29E;margin-bottom:5px}.nt{font-size:13px;line-height:1.7;white-space:pre-wrap}.mb{margin-bottom:8px}.dl{display:inline-flex;background:#EEF0FD;color:#3730A3;border-radius:6px;padding:5px 10px;font-size:12px;text-decoration:none;margin:2px}</style></head><body><div class="cov"><div class="ct">${cfg.name}</div><div class="cs">${cfg.subtitle||""}</div><div style="font-size:12px;opacity:.5;margin-top:6px">📅 ${cfg.dates}　🗓 匯出於 ${now}</div></div><div class="stats"><div class="stat"><div class="sn">${nc}</div><div class="sl">則文字筆記</div></div><div class="stat"><div class="sn">${mc}</div><div class="sl">個媒體連結</div></div><div class="stat"><div class="sn">${sections.length}</div><div class="sl">天有記錄</div></div></div><div class="con">${sections.length?sections.join(""):`<div style="text-align:center;padding:60px;color:#bbb">📭 尚無筆記</div>`}</div></body></html>`;
 }
 
-// ─── MAIN APP ──────────────────────────────────────────────────────────────────
-function App() {
-  const dayKeys = Object.keys(SESSIONS);
-  const [curDay, setCurDay]         = useState(dayKeys[0]);
-  const [curFilter, setFilter]      = useState("all");
-  const [curView, setView]          = useState("schedule");
-  const [notes, setNotes]           = useState(load(NK));
-  const [media, setMedia]           = useState(load(MK));
-  const [updates, setUpdates]       = useState(load(UK));
-  const [openCards, setOpenCards]   = useState({});
-  const [draftNotes, setDraftNotes] = useState({});
-  const [draftMedia, setDraftMedia] = useState({});
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [hasDot, setHasDot]         = useState(false);
-  const [exportDone, setExportDone] = useState(false);
-  const [exportingDoc, setExportingDoc] = useState(false);
-  const [uploading, setUploading]   = useState({});
+// ══════════════════════════════════════════════════════════════════════════════
+// DESIGN ATOMS
+// ══════════════════════════════════════════════════════════════════════════════
+function Icon({ name, size=22, color="currentColor", stroke=1.7 }) {
+  const p={fill:"none",stroke:color,strokeWidth:stroke,strokeLinecap:"round",strokeLinejoin:"round"};
+  const paths={
+    home:     <><path d="M3 10.5 12 3l9 7.5" {...p}/><path d="M5 9.5V20h14V9.5" {...p}/><path d="M9.5 20v-5h5v5" {...p}/></>,
+    calendar: <><rect x="3" y="4.5" width="18" height="16.5" rx="2.5" {...p}/><path d="M3 9h18M8 2.5v4M16 2.5v4" {...p}/></>,
+    note:     <><path d="M5 3.5h9l5 5V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z" {...p}/><path d="M13.5 3.5V9H19M8 13h8M8 16.5h5" {...p}/></>,
+    refresh:  <><path d="M20 11A8 8 0 0 0 6 6.5L3.5 9" {...p}/><path d="M4 13a8 8 0 0 0 14 4.5L20.5 15" {...p}/><path d="M3.5 4.5V9H8M20.5 19.5V15H16" {...p}/></>,
+    pin:      <><path d="M12 21s7-6.3 7-11.5A7 7 0 0 0 5 9.5C5 14.7 12 21 12 21Z" {...p}/><circle cx="12" cy="9.3" r="2.5" {...p}/></>,
+    clock:    <><circle cx="12" cy="12" r="8.5" {...p}/><path d="M12 7.5V12l3 1.8" {...p}/></>,
+    chevR:    <path d="M9 5l7 7-7 7" {...p}/>,
+    chevD:    <path d="M5 9l7 7 7-7" {...p}/>,
+    camera:   <><path d="M4 8.5h3l1.5-2h7L18 8.5h2a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1Z" {...p}/><circle cx="12" cy="13" r="3.2" {...p}/></>,
+    cloud:    <><path d="M7 18a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17.5 11 3.5 3.5 0 0 1 17 18H7Z" {...p}/></>,
+    cloudCheck:<><path d="M7 18a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17.5 11 3.5 3.5 0 0 1 17 18H7Z" {...p}/><path d="M9.3 14l1.8 1.8 3.4-3.6" {...p}/></>,
+    check:    <path d="M5 12.5l4.5 4.5L19 6.5" {...p}/>,
+    spark:    <><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M17.7 6.3l-2.5 2.5M8.8 15.2l-2.5 2.5" {...p}/></>,
+    doc:      <><path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" {...p}/><path d="M13 3v5h5" {...p}/></>,
+    download: <><path d="M12 3v12M7.5 10.5 12 15l4.5-4.5" {...p}/><path d="M5 19.5h14" {...p}/></>,
+    link:     <><path d="M9.5 14.5l5-5M8 11l-2 2a3.5 3.5 0 0 0 5 5l2-2M16 13l2-2a3.5 3.5 0 0 0-5-5l-2 2" {...p}/></>,
+    map:      <><path d="M9 4.5 3.5 6.8v13L9 17.2l6 2.3 5.5-2.3v-13L15 6.8 9 4.5Z" {...p}/><path d="M9 4.5v12.7M15 6.8v12.7" {...p}/></>,
+    user:     <><circle cx="12" cy="8" r="3.6" {...p}/><path d="M5.5 20a6.5 6.5 0 0 1 13 0" {...p}/></>,
+    star:     <path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9 6.8 19.5l1-5.8-4.2-4.1 5.8-.8L12 3.5Z" fill="none" stroke={color} strokeWidth={stroke} strokeLinejoin="round"/>,
+    arrowR:   <path d="M5 12h14M13 6l6 6-6 6" {...p}/>,
+    video:    <><path d="M4 8a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2H4Z" {...p}/><path d="M16 10l4-2v8l-4-2V10Z" {...p}/></>,
+    swap:     <><path d="M7 16V4M7 4L4 7M7 4l3 3" {...p}/><path d="M17 8v12M17 20l-3-3M17 20l3-3" {...p}/></>,
+    badge:    <><rect x="3" y="4" width="18" height="16" rx="2.5" {...p}/><path d="M3 9h18" {...p}/><circle cx="9" cy="13.5" r="2" {...p}/><path d="M13 12h4M13 15h3" {...p}/></>,
+    qr:       <><rect x="3" y="3" width="7" height="7" rx="1" {...p}/><rect x="14" y="3" width="7" height="7" rx="1" {...p}/><rect x="3" y="14" width="7" height="7" rx="1" {...p}/><path d="M14 14h1M17 14h3M14 17v3M17 17h1M20 17v3M20 14v1" {...p}/></>,
+  };
+  return <svg width={size} height={size} viewBox="0 0 24 24" style={{display:"block"}}>{paths[name]}</svg>;
+}
 
-  // Google auth
+function CountRing({ days, size=64 }) {
+  const r=(size-8)/2, c=2*Math.PI*r, frac=Math.max(0,Math.min(1,(7-days)/7));
+  return (
+    <div style={{position:"relative",width:size,height:size}}>
+      <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="4"/>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c*(1-frac)} style={{transition:"stroke-dashoffset .9s cubic-bezier(.4,0,.2,1)"}}/>
+      </svg>
+      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#fff"}}>
+        <div style={{fontSize:24,fontWeight:700,lineHeight:1,fontFamily:FONT_SERIF}}>{days}</div>
+        <div style={{fontSize:9.5,opacity:.8,marginTop:1}}>天</div>
+      </div>
+    </div>
+  );
+}
+
+function TagChip({ t, small }) {
+  const conf=getCONF(); const cfg=conf?.tags[t]; if (!cfg) return null;
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:small?10.5:11.5,fontWeight:600,lineHeight:1,padding:small?"3px 7px":"4px 8px",borderRadius:7,background:cfg.bg,color:cfg.fg,fontFamily:FONT_SANS}}>
+      <span style={{fontSize:small?9:10}}>{cfg.glyph}</span>{cfg.label}
+    </span>
+  );
+}
+function TypeBadge({ b }) {
+  const conf=getCONF(); const cfg=conf?.badges[b]||conf?.badges.edu||{bg:"#EEF0FD",fg:"#3730A3",label:"講座"};
+  return <span style={{fontSize:11,fontWeight:700,letterSpacing:".5px",padding:"3px 8px",borderRadius:6,background:cfg.bg,color:cfg.fg,fontFamily:FONT_SANS,flexShrink:0}}>{cfg.label}</span>;
+}
+function Card({ children, style, onClick, pad=16 }) {
+  return <div onClick={onClick} style={{background:T.surface,borderRadius:T.r,padding:pad,border:`1px solid ${T.hair}`,boxShadow:"0 1px 2px rgba(27,25,48,.04), 0 6px 16px -10px rgba(27,25,48,.10)",...style}}>{children}</div>;
+}
+function SectionHead({ children, action }) {
+  return (
+    <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",margin:"22px 4px 11px"}}>
+      <div style={{fontSize:12.5,fontWeight:700,letterSpacing:".8px",color:T.muted,fontFamily:FONT_SANS}}>{children}</div>
+      {action}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 會議切換 Sheet
+// ══════════════════════════════════════════════════════════════════════════════
+function ConferenceSwitcher({ allConfigs, activeKey, onSelect, onClose }) {
+  const now = new Date();
+
+  const statusOf = (cfg) => {
+    const diff = Math.ceil((new Date(cfg.startDate) - now) / 86400000);
+    if (diff > 0)  return { label: `${diff} 天後`, color: T.primary, bg: T.primaryTint };
+    if (diff === 0) return { label: "今天",       color: "#9A6B00", bg: "#FCF3DC" };
+    return              { label: `${-diff} 天前`, color: T.muted,   bg: T.surfaceAlt };
+  };
+
+  return (
+    <>
+      {/* overlay */}
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,WebkitBackdropFilter:"blur(4px)",backdropFilter:"blur(4px)"}}/>
+      {/* sheet */}
+      <div className="cc-sheet" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:61,background:T.surface,borderRadius:"24px 24px 0 0",paddingBottom:"max(28px,env(safe-area-inset-bottom,0px))",boxShadow:"0 -20px 60px rgba(27,25,48,.18)"}}>
+        {/* handle */}
+        <div style={{width:36,height:4,borderRadius:2,background:T.hair,margin:"14px auto 0"}}/>
+
+        <div style={{padding:"18px 20px 4px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{fontSize:17,fontWeight:700,color:T.ink,fontFamily:FONT_SERIF}}>切換會議</div>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:T.muted,fontSize:20,lineHeight:1,padding:"4px 6px"}}>×</button>
+        </div>
+
+        <div style={{padding:"4px 20px 8px"}}>
+          {Object.entries(allConfigs).map(([key, cfg], i, arr) => {
+            const st = statusOf(cfg);
+            const isActive = key === activeKey;
+            return (
+              <div key={key} onClick={() => onSelect(key)} style={{
+                display:"flex",alignItems:"center",gap:14,padding:"15px 0",cursor:"pointer",
+                borderBottom: i < arr.length-1 ? `1px solid ${T.hair}` : "none",
+              }}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontFamily:FONT_SERIF,fontSize:16,fontWeight:700,color:isActive?T.primary:T.ink,lineHeight:1.3}}>{cfg.name}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:5}}>
+                    <span style={{fontSize:12,color:T.muted}}>{cfg.dates}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:st.color,background:st.bg,padding:"2px 8px",borderRadius:999}}>{st.label}</span>
+                  </div>
+                  {cfg.venue && <div style={{fontSize:11.5,color:T.faint,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(cfg.venue||cfg.location||"").split("，")[0]}</div>}
+                </div>
+                {isActive
+                  ? <div style={{width:26,height:26,borderRadius:"50%",background:T.primary,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="check" size={14} color="#fff" stroke={2.5}/></div>
+                  : <div style={{width:26,height:26,borderRadius:"50%",border:`2px solid ${T.hair}`,flexShrink:0}}/>
+                }
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HOME SCREEN
+// ══════════════════════════════════════════════════════════════════════════════
+function HomeScreen({ S }) {
+  const { daysLeft, notes, reminders, toggleReminder, goSession, onSwitchConference, multiConf } = S;
+  const conf = getCONF();
+  const firstDayBlocks = conf.allBlocks[conf.dayKeys[0]] || [];
+  const recs = firstDayBlocks.filter(b => b.id && b.tags.includes("star")).slice(0, 3);
+  const doneCount = Object.values(reminders).filter(Boolean).length;
+  const sessionCount = firstDayBlocks.filter(b => b.id).length;
+
+  function HeroRow({ icon, text, sub }) {
+    return (
+      <div style={{display:"flex",gap:9,alignItems:"flex-start"}}>
+        <span style={{marginTop:1}}><Icon name={icon} size={15} color="rgba(255,255,255,.8)"/></span>
+        <div>
+          <div style={{fontSize:12.5,color:"#fff",fontWeight:500,lineHeight:1.4}}>{text}</div>
+          {sub && <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginTop:1}}>{sub}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{padding:"4px 16px 20px"}}>
+      {/* HERO */}
+      <div style={{position:"relative",overflow:"hidden",borderRadius:24,padding:"20px 20px 22px",background:`linear-gradient(150deg, ${T.heroFrom}, ${T.heroTo})`,boxShadow:"0 18px 40px -22px rgba(49,46,129,.85)"}}>
+        <div style={{position:"absolute",top:-60,right:-50,width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,.07)"}}/>
+        <div style={{position:"absolute",bottom:-70,left:-30,width:150,height:150,borderRadius:"50%",background:"rgba(255,255,255,.05)"}}/>
+        <div style={{position:"relative"}}>
+          {/* org + switch trigger */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{fontSize:12,color:"rgba(255,255,255,.72)",fontWeight:500,letterSpacing:".3px"}}>{conf.org}</div>
+            {multiConf && (
+              <button onClick={onSwitchConference} style={{display:"inline-flex",alignItems:"center",gap:5,background:"rgba(255,255,255,.2)",border:"none",borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:600,color:"#fff",cursor:"pointer",flexShrink:0}}>
+                <Icon name="swap" size={13} color="#fff" stroke={2}/>切換會議
+              </button>
+            )}
+          </div>
+          <div style={{display:"flex",gap:14,marginTop:12,alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:FONT_SERIF,fontWeight:700,fontSize:21,color:"#fff",lineHeight:1.32,letterSpacing:".2px"}}>{conf.name}</div>
+              <div style={{marginTop:10,display:"inline-flex",alignItems:"center",gap:6,background:"rgba(255,255,255,.16)",borderRadius:8,padding:"5px 10px"}}>
+                <Icon name="calendar" size={14} color="#fff" stroke={2}/>
+                <span style={{fontSize:12.5,color:"#fff",fontWeight:600}}>{conf.dates}</span>
+              </div>
+            </div>
+            <CountRing days={daysLeft}/>
+          </div>
+          <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid rgba(255,255,255,.16)",display:"flex",flexDirection:"column",gap:9}}>
+            <HeroRow icon="pin"   text={conf.venue} sub={conf.venueAddr}/>
+            {conf.registration && <HeroRow icon="clock" text={conf.registration}/>}
+          </div>
+        </div>
+      </div>
+
+      {/* quick actions */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:14}}>
+        <QuickBtn icon="calendar" label="查看議程" sub={`${sessionCount} 個場次`} onClick={() => S.goTo("sched")} primary/>
+        <QuickBtn icon="map" label="會場地圖" sub={conf.venue.substring(0,8)} onClick={() => window.open(conf.mapsUrl,"_blank")}/>
+      </div>
+
+      {recs.length > 0 && <>
+        <SectionHead>為您推薦</SectionHead>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {recs.map(s => (
+            <Card key={s.id} pad={14} onClick={() => goSession(s.id)} style={{cursor:"pointer"}}>
+              <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                <div style={{flexShrink:0,width:46,textAlign:"center"}}>
+                  <div style={{fontFamily:FONT_SERIF,fontSize:17,fontWeight:700,color:T.primary,lineHeight:1}}>{s.time}</div>
+                  <div style={{fontSize:10,color:T.faint,marginTop:3}}>{s.end}</div>
+                </div>
+                <div style={{width:1,alignSelf:"stretch",background:T.hair}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13.5,fontWeight:600,color:T.ink,lineHeight:1.4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{s.title}</div>
+                  <div style={{marginTop:6,display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontSize:11.5,color:T.muted}}>{s.speakers[0]}</span>
+                    {notes[s.id] && <Icon name="note" size={13} color={T.gold}/>}
+                  </div>
+                </div>
+                <Icon name="chevR" size={17} color={T.faint}/>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </>}
+
+      {conf.reminders.length > 0 && <>
+        <SectionHead action={<span style={{fontSize:11.5,color:T.muted}}>{doneCount}/{conf.reminders.length}</span>}>行前準備</SectionHead>
+        <Card pad={6}>
+          {conf.reminders.map((r,i) => {
+            const on=!!reminders[i];
+            return (
+              <div key={i} onClick={() => toggleReminder(i)} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 12px",cursor:"pointer",borderBottom:i<conf.reminders.length-1?`1px solid ${T.hair2}`:"none"}}>
+                <div style={{width:22,height:22,borderRadius:7,flexShrink:0,border:on?"none":`1.8px solid ${T.faint}`,background:on?T.primary:"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+                  {on && <Icon name="check" size={14} color={T.onPrimary} stroke={2.4}/>}
+                </div>
+                <div style={{fontSize:13.5,color:on?T.muted:T.ink2,textDecoration:on?"line-through":"none",lineHeight:1.4}}>{r}</div>
+              </div>
+            );
+          })}
+        </Card>
+      </>}
+
+      {conf.links.length > 0 && <>
+        <SectionHead>重要資訊</SectionHead>
+        <Card pad={6}>
+          {conf.credits && <InfoRow icon="spark" label="積分" value={conf.credits}/>}
+          {conf.links.map(([label,url],i) => (
+            <InfoRow key={i} icon="link" label={label} link onClick={() => window.open(url,"_blank")} last={i===conf.links.length-1}/>
+          ))}
+        </Card>
+      </>}
+    </div>
+  );
+}
+
+function QuickBtn({ icon, label, sub, onClick, primary }) {
+  return (
+    <div onClick={onClick} style={{cursor:"pointer",borderRadius:16,padding:"14px 15px",background:primary?T.primary:T.surface,border:`1px solid ${primary?"transparent":T.hair}`,boxShadow:primary?"0 8px 20px -12px "+T.primary:"0 1px 2px rgba(27,25,48,.04)"}}>
+      <Icon name={icon} size={20} color={primary?T.onPrimary:T.primary}/>
+      <div style={{marginTop:10,fontSize:14.5,fontWeight:700,color:primary?T.onPrimary:T.ink}}>{label}</div>
+      <div style={{fontSize:11,color:primary?"rgba(255,255,255,.7)":T.muted,marginTop:1}}>{sub}</div>
+    </div>
+  );
+}
+function InfoRow({ icon, label, value, link, onClick, last }) {
+  return (
+    <div onClick={onClick} style={{display:"flex",alignItems:"center",gap:11,padding:"11px 11px",cursor:onClick?"pointer":"default",borderBottom:last?"none":`1px solid ${T.hair2}`}}>
+      <Icon name={icon} size={17} color={T.primary}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13.5,fontWeight:link?600:500,color:link?T.primary:T.ink2,lineHeight:1.4}}>{label}</div>
+        {value && <div style={{fontSize:12,color:T.muted,marginTop:2,lineHeight:1.4}}>{value}</div>}
+      </div>
+      {link && <Icon name="arrowR" size={15} color={T.faint}/>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SCHEDULE SCREEN
+// ══════════════════════════════════════════════════════════════════════════════
+function FilterBar({ filter, setFilter, counts }) {
+  const chips=[["all","全部",counts.all],["star","★ 推薦",counts.star],["prenatal","產前",counts.prenatal],["cyto","細胞遺傳",counts.cyto],["notes","我的筆記",counts.notes]].filter(([k,,n])=>k==="all"||k==="notes"||n>0);
+  return (
+    <div style={{display:"flex",gap:7,overflowX:"auto",padding:"2px 16px 2px",WebkitOverflowScrolling:"touch"}}>
+      {chips.map(([k,label,n])=>{
+        const on=filter===k;
+        return <button key={k} onClick={()=>setFilter(k)} style={{flexShrink:0,border:"none",cursor:"pointer",fontFamily:FONT_SANS,fontSize:12.5,fontWeight:600,padding:"7px 13px",borderRadius:999,background:on?T.primary:T.surface,color:on?T.onPrimary:T.ink2,boxShadow:on?"none":`inset 0 0 0 1px ${T.hair}`,transition:"all .15s"}}>
+          {label}{typeof n==="number"&&n>0&&<span style={{opacity:on?.8:.5,marginLeft:5}}>{n}</span>}
+        </button>;
+      })}
+    </div>
+  );
+}
+
+function ScheduleScreen({ S }) {
+  const conf = getCONF();
+  const { notes, media, filter, setFilter, expanded, toggleExpand, curDay, setCurDay } = S;
+  const blocks = conf.allBlocks[curDay] || [];
+  const sessions = blocks.filter(b=>b.id);
+  const hmc = m => (m?.driveLinks?.length||0)+(m?.videoLinks?.length||0);
+  const counts = {
+    all: sessions.length,
+    star: sessions.filter(s=>s.tags.includes("star")).length,
+    prenatal: sessions.filter(s=>s.tags.includes("prenatal")).length,
+    cyto: sessions.filter(s=>s.tags.includes("cyto")).length,
+    notes: sessions.filter(s=>notes[s.id]||hmc(media[s.id])).length,
+  };
+  const matches = s => { if(filter==="all")return true; if(filter==="notes")return notes[s.id]||hmc(media[s.id]); return s.tags.includes(filter); };
+
+  return (
+    <div>
+      <div style={{position:"sticky",top:0,zIndex:4,background:T.paper,paddingTop:4,paddingBottom:8}}>
+        {conf.dayKeys.length > 1 && (
+          <div style={{display:"flex",gap:6,padding:"0 16px 10px",overflowX:"auto"}}>
+            {conf.dayKeys.map(dk => {
+              const on=dk===curDay;
+              return <button key={dk} onClick={()=>setCurDay(dk)} style={{flexShrink:0,border:"none",cursor:"pointer",fontFamily:FONT_SANS,fontSize:12.5,fontWeight:600,padding:"6px 14px",borderRadius:999,background:on?T.primaryTint:"transparent",color:on?T.primary:T.muted}}>{conf.days[dk]||dk}</button>;
+            })}
+          </div>
+        )}
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"0 16px 10px"}}>
+          <div style={{fontFamily:FONT_SERIF,fontSize:15,fontWeight:700,color:T.ink}}>{conf.days[curDay]||curDay}</div>
+          <div style={{fontSize:11.5,color:T.muted}}>· {sessions.length} 場</div>
+        </div>
+        <FilterBar filter={filter} setFilter={setFilter} counts={counts}/>
+      </div>
+      <div style={{padding:"6px 16px 24px"}}>
+        <div style={{position:"relative"}}>
+          <div style={{position:"absolute",left:47,top:8,bottom:8,width:2,background:T.hair}}/>
+          {blocks.map((b,i)=>{
+            if (b.kind==="mark") return <Marker key={i} b={b}/>;
+            if (!matches(b)) return null;
+            return <SessionCard key={b.id} b={b} S={S}/>;
+          })}
+        </div>
+        {sessions.filter(matches).length===0 && (
+          <div style={{textAlign:"center",padding:"48px 20px",color:T.faint}}>
+            <div style={{display:"inline-flex",marginBottom:10}}><Icon name="note" size={30} color={T.faint}/></div>
+            <div style={{fontSize:13}}>此分類目前沒有場次</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Marker({ b }) {
+  return (
+    <div style={{display:"flex",alignItems:"center",padding:"7px 0",position:"relative"}}>
+      <div style={{width:47,textAlign:"right",paddingRight:13,fontSize:11.5,color:T.faint,fontWeight:600,fontFamily:FONT_SERIF}}>{b.time}</div>
+      <div style={{width:11,height:11,borderRadius:"50%",background:T.paper,border:`2px solid ${T.faint}`,flexShrink:0,zIndex:1,marginLeft:-5.5}}/>
+      <div style={{marginLeft:13,display:"flex",alignItems:"baseline",gap:8}}>
+        <span style={{fontSize:12.5,fontWeight:600,color:T.ink2}}>{b.label}</span>
+        {b.note && <span style={{fontSize:11,color:T.faint}}>{b.note}</span>}
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({ b, S }) {
+  const { notes, saveNote, media, removeMediaLink, accessToken, uploading, handleCapture, expanded, toggleExpand, syncStatus } = S;
+  const open=!!expanded[b.id];
+  const hasNote=!!notes[b.id];
+  const med=media[b.id]||{driveLinks:[],videoLinks:[]};
+  const medCount=(med.driveLinks?.length||0)+(med.videoLinks?.length||0);
+  const hasMed=medCount>0;
+  const [draft,setDraft]=useState(notes[b.id]||"");
+  const [saved,setSaved]=useState(false);
+  const isUploading=!!uploading[b.id];
+  const cameraRef=useRef(null); const videoRef=useRef(null); const libRef=useRef(null);
+  useEffect(()=>{ if(open) setDraft(notes[b.id]||""); },[open]);
+  const accent=hasNote?T.gold:hasMed?T.primary:null;
+  const save=()=>{ saveNote(b.id,draft.trim()); setSaved(true); setTimeout(()=>setSaved(false),1600); };
+  function btnSt(kind){
+    const base={border:"none",cursor:"pointer",borderRadius:9,padding:"8px 15px",fontSize:12.5,fontWeight:600,fontFamily:FONT_SANS};
+    if(kind==="solid") return {...base,background:T.primary,color:T.onPrimary};
+    if(kind==="disabled") return {...base,background:T.surfaceAlt,color:T.faint,cursor:"default"};
+    return {...base,background:"transparent",color:T.muted,border:`1px solid ${T.hair}`};
+  }
+  return (
+    <div id={"sess-"+b.id} style={{display:"flex",marginBottom:10,position:"relative",scrollMarginTop:80}}>
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{handleCapture(b.id,b.title,e.target);e.target.value="";}}/>
+      <input ref={videoRef}  type="file" accept="video/*" capture="environment" style={{display:"none"}} onChange={e=>{handleCapture(b.id,b.title,e.target);e.target.value="";}}/>
+      <input ref={libRef}    type="file" accept="image/*,video/*" multiple      style={{display:"none"}} onChange={e=>{handleCapture(b.id,b.title,e.target);e.target.value="";}}/>
+      <div style={{width:47,flexShrink:0,textAlign:"right",paddingRight:13,paddingTop:13}}>
+        <div style={{fontFamily:FONT_SERIF,fontSize:14.5,fontWeight:700,color:T.primary,lineHeight:1}}>{b.time}</div>
+        <div style={{fontSize:10,color:T.faint,marginTop:3}}>{b.end}</div>
+      </div>
+      <div style={{width:13,height:13,borderRadius:"50%",background:accent||T.surface,border:`2.5px solid ${accent||T.primary}`,flexShrink:0,zIndex:1,marginLeft:-6.5,marginTop:15}}/>
+      <div style={{flex:1,minWidth:0,marginLeft:13}}>
+        <div style={{background:T.surface,borderRadius:16,overflow:"hidden",border:`1px solid ${accent?accent+"55":T.hair}`,boxShadow:open?"0 10px 28px -16px rgba(27,25,48,.3)":"0 1px 2px rgba(27,25,48,.04), 0 6px 16px -12px rgba(27,25,48,.10)",transition:"box-shadow .2s"}}>
+          <div onClick={()=>toggleExpand(b.id)} style={{padding:"13px 14px",cursor:"pointer",display:"flex",gap:10,alignItems:"flex-start"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
+                <TypeBadge b={b.b}/>
+                {hasNote && <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10.5,fontWeight:600,color:T.gold}}><Icon name="note" size={12} color={T.gold}/>筆記</span>}
+                {hasMed  && <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10.5,fontWeight:600,color:T.primary}}><Icon name="camera" size={12} color={T.primary}/>{medCount}</span>}
+              </div>
+              <div style={{fontSize:14,fontWeight:600,color:T.ink,lineHeight:1.42,letterSpacing:".1px"}}>{b.title}</div>
+              <div style={{marginTop:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11.5,color:T.muted,fontWeight:500}}><Icon name="user" size={12} color={T.muted}/>{b.speakers.join("、")}</span>
+              </div>
+              {b.tags.length>0 && <div style={{marginTop:8,display:"flex",gap:5,flexWrap:"wrap"}}>{b.tags.map(t=><TagChip key={t} t={t} small/>)}</div>}
+            </div>
+            <span style={{color:T.faint,marginTop:2,transform:open?"rotate(90deg)":"none",transition:"transform .2s",flexShrink:0}}><Icon name="chevR" size={16} color={T.faint}/></span>
+          </div>
+          {open && (
+            <div style={{padding:"0 14px 14px",borderTop:`1px solid ${T.hair2}`}} onClick={e=>e.stopPropagation()}>
+              {b.pin && <div style={{display:"flex",gap:7,alignItems:"flex-start",background:T.goldTint,borderRadius:10,padding:"9px 11px",marginTop:12}}><span style={{marginTop:1,flexShrink:0}}><Icon name="star" size={13} color={T.gold}/></span><div style={{fontSize:12,fontWeight:600,color:T.gold,lineHeight:1.45}}>{b.pin}</div></div>}
+              {b.detail && <div style={{fontSize:12.5,color:T.ink2,lineHeight:1.7,marginTop:12,whiteSpace:"pre-line"}}>{b.detail}</div>}
+              <div style={{marginTop:13,paddingTop:13,borderTop:`1px solid ${T.hair2}`}}>
+                <div style={{fontSize:11,fontWeight:700,letterSpacing:".5px",color:T.muted,marginBottom:8}}>講者</div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {b.speakers.map(sp=>(
+                    <span key={sp} style={{display:"inline-flex",alignItems:"center",gap:6,background:T.surfaceAlt,border:`1px solid ${T.hair}`,borderRadius:999,padding:"5px 11px 5px 6px",fontSize:12,color:T.ink2,fontWeight:500}}>
+                      <span style={{width:20,height:20,borderRadius:"50%",background:T.primaryTint,color:T.primary,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700}}>{sp[0]}</span>{sp}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div style={{marginTop:14,paddingTop:14,borderTop:`1px solid ${T.hair2}`}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,fontWeight:700,letterSpacing:".4px",color:T.muted}}><Icon name="note" size={13} color={T.muted}/>我的筆記</div>
+                  {accessToken && <SyncPill saved={saved} syncing={syncStatus==="syncing"}/>}
+                </div>
+                <textarea value={draft} onChange={e=>setDraft(e.target.value)} placeholder="記錄重點、問題、要追問的細節…" style={{width:"100%",boxSizing:"border-box",border:`1px solid ${T.hair}`,borderRadius:11,padding:"11px 12px",fontSize:13,background:T.surfaceAlt,color:T.ink,resize:"vertical",minHeight:76,fontFamily:FONT_SANS,lineHeight:1.6,outline:"none"}}/>
+                <div style={{display:"flex",justifyContent:"flex-end",gap:7,marginTop:8}}>
+                  {hasNote && <button onClick={()=>{setDraft("");saveNote(b.id,"");}} style={btnSt("ghost")}>清除</button>}
+                  <button onClick={save} disabled={draft.trim()===(notes[b.id]||"")} style={btnSt(draft.trim()===(notes[b.id]||"")?"disabled":"solid")}>{saved?"已儲存 ✓":"儲存筆記"}</button>
+                </div>
+              </div>
+              <div style={{marginTop:14,paddingTop:14,borderTop:`1px solid ${T.hair2}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,fontWeight:700,letterSpacing:".4px",color:T.muted,marginBottom:9}}>
+                  <Icon name="camera" size={13} color={T.muted}/>照片 / 影片
+                  {accessToken && <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10.5,fontWeight:600,color:T.primary,marginLeft:2}}><Icon name="cloudCheck" size={12} color={T.primary}/>已連 Drive</span>}
+                </div>
+                {accessToken ? isUploading ? (
+                  <div style={{background:"#F0FDF4",border:"1px solid #86EFAC",borderRadius:10,padding:11,fontSize:13,fontWeight:600,textAlign:"center",color:"#16A34A",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    <div className="cc-spin" style={{width:16,height:16,borderRadius:"50%",border:"2.5px solid #86EFAC",borderTopColor:"#16A34A",flexShrink:0}}/>上傳中…
+                  </div>
+                ) : (
+                  <div style={{display:"flex",gap:7}}>
+                    {[["camera","拍照",cameraRef],["video","錄影",videoRef],["download","批次",libRef]].map(([icon,label,ref])=>(
+                      <button key={label} onClick={()=>ref.current?.click()} style={{flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5,border:`1px solid ${T.hair}`,background:T.surface,color:T.ink2,cursor:"pointer",borderRadius:10,padding:"9px 0",fontSize:12.5,fontWeight:600,fontFamily:FONT_SANS}}>
+                        <Icon name={icon} size={15} color={T.primary}/>{label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{fontSize:12,color:T.faint,background:T.surfaceAlt,borderRadius:10,padding:"10px 12px",lineHeight:1.5}}>連接 Google Drive 後可直接拍照上傳。前往「筆記」分頁連接。</div>
+                )}
+                {(med.driveLinks?.length>0||med.videoLinks?.length>0) && (
+                  <div style={{marginTop:9,display:"flex",flexDirection:"column",gap:6}}>
+                    {(med.driveLinks||[]).map((lk,i)=>(
+                      <div key={"d"+i} style={{display:"flex",alignItems:"center",gap:8,background:T.surfaceAlt,borderRadius:9,padding:"8px 10px"}}>
+                        <Icon name="camera" size={15} color={T.primary}/>
+                        <a href={lk.url} target="_blank" rel="noreferrer" style={{flex:1,fontSize:12,color:T.primary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:"none"}}>{lk.label}</a>
+                        <button onClick={()=>removeMediaLink(b.id,"drive",i)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:17,lineHeight:1,padding:"0 2px"}}>×</button>
+                      </div>
+                    ))}
+                    {(med.videoLinks||[]).map((vl,i)=>(
+                      <div key={"v"+i} style={{display:"flex",alignItems:"center",gap:8,background:T.surfaceAlt,borderRadius:9,padding:"8px 10px"}}>
+                        <Icon name="video" size={15} color="#7C3AED"/>
+                        <a href={vl.url} target="_blank" rel="noreferrer" style={{flex:1,fontSize:12,color:"#7C3AED",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:"none"}}>{vl.label}</a>
+                        <button onClick={()=>removeMediaLink(b.id,"video",i)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:17,lineHeight:1,padding:"0 2px"}}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SyncPill({ saved, syncing }) {
+  const color=saved?"#0A6E50":syncing?"#B45309":T.muted;
+  const bg=saved?"#E6F6F0":syncing?"#FEF3C7":T.surfaceAlt;
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:600,color,background:bg,padding:"3px 8px",borderRadius:999,transition:"all .2s"}}><Icon name={saved?"cloudCheck":syncing?"refresh":"cloud"} size={12} color={color}/>{saved?"已同步":syncing?"同步中":"雲端"}</span>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NOTES SCREEN
+// ══════════════════════════════════════════════════════════════════════════════
+function NotesScreen({ S }) {
+  const conf=getCONF();
+  const { notes, media, accessToken, userEmail, syncStatus, tokenClient, goSession, doExportHTML, doExportGoogleDoc, exportingDoc } = S;
+  const allSessions=Object.values(conf.allBlocks).flat().filter(b=>b.id);
+  const hmc=m=>(m?.driveLinks?.length||0)+(m?.videoLinks?.length||0);
+  const recorded=allSessions.filter(s=>notes[s.id]||hmc(media[s.id]));
+  const noteCount=allSessions.filter(s=>notes[s.id]).length;
+  const mediaCount=allSessions.reduce((a,s)=>a+hmc(media[s.id]||{}),0);
+
+  return (
+    <div style={{padding:"4px 16px 24px"}}>
+      {accessToken ? (
+        <div style={{display:"flex",alignItems:"center",gap:12,background:"#E6F6F0",border:"1px solid #BBE6D6",borderRadius:16,padding:"13px 15px"}}>
+          <div style={{width:38,height:38,borderRadius:11,background:"#0A6E50",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="cloudCheck" size={20} color="#fff"/></div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13.5,fontWeight:700,color:"#0A6E50"}}>已連接 Google Drive</div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{userEmail||"已登入"} · {syncStatus==="syncing"?"同步中…":"自動同步至 "+getCFG()?.driveFolderName+"/"}</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{background:`linear-gradient(150deg, ${T.heroFrom}, ${T.heroTo})`,borderRadius:18,padding:"17px 17px",boxShadow:"0 14px 32px -20px rgba(49,46,129,.8)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}><Icon name="cloud" size={19} color="#fff"/><div style={{fontSize:14.5,fontWeight:700,color:"#fff"}}>連接 Google Drive</div></div>
+          <div style={{fontSize:12.5,color:"rgba(255,255,255,.78)",lineHeight:1.55,margin:"8px 0 13px"}}>登入後可跨裝置同步筆記、直接拍照上傳 Drive、一鍵匯出為 Google Doc。</div>
+          <button onClick={()=>tokenClient?.requestAccessToken()} disabled={!tokenClient} style={{width:"100%",border:"none",cursor:tokenClient?"pointer":"not-allowed",borderRadius:11,padding:"11px 0",fontSize:13.5,fontWeight:700,background:"#fff",color:T.primaryDeep,fontFamily:FONT_SANS,opacity:tokenClient?1:.6}}>
+            {tokenClient?"使用 Google 帳號登入":"⏳ 載入中…"}
+          </button>
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:9,marginTop:14}}>
+        {[[noteCount,"文字筆記"],[mediaCount,"媒體連結"],[recorded.length,"場次有記錄"]].map(([n,l],i)=>(
+          <div key={i} style={{background:T.surface,border:`1px solid ${T.hair}`,borderRadius:14,padding:"14px 8px",textAlign:"center",boxShadow:"0 1px 2px rgba(27,25,48,.04)"}}>
+            <div style={{fontFamily:FONT_SERIF,fontSize:26,fontWeight:700,color:T.primary,lineHeight:1}}>{n}</div>
+            <div style={{fontSize:10.5,color:T.muted,marginTop:5}}>{l}</div>
+          </div>
+        ))}
+      </div>
+      <SectionHead>已記錄場次</SectionHead>
+      {recorded.length===0 ? (
+        <div style={{textAlign:"center",padding:"40px 20px",color:T.faint}}>
+          <div style={{display:"inline-flex",marginBottom:10}}><Icon name="note" size={30} color={T.faint}/></div>
+          <div style={{fontSize:13,lineHeight:1.6}}>尚無筆記。<br/>在「議程」中展開任一場次即可開始記錄。</div>
+        </div>
+      ) : (
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {recorded.map(s=>{
+            const med=media[s.id]||{};
+            return (
+              <Card key={s.id} pad={14} onClick={()=>goSession(s.id)} style={{cursor:"pointer"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <TypeBadge b={s.b}/><span style={{fontSize:11,color:T.faint,fontFamily:FONT_SERIF,fontWeight:700}}>{s.time}</span>
+                  <span style={{marginLeft:"auto"}}><Icon name="chevR" size={15} color={T.faint}/></span>
+                </div>
+                <div style={{fontSize:13.5,fontWeight:600,color:T.ink,lineHeight:1.4}}>{s.title}</div>
+                {notes[s.id] && <div style={{marginTop:9,background:T.surfaceAlt,borderLeft:`3px solid ${T.gold}`,borderRadius:"0 8px 8px 0",padding:"9px 11px",fontSize:12.5,color:T.ink2,lineHeight:1.6,whiteSpace:"pre-line",display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{notes[s.id]}</div>}
+                {(med.driveLinks?.length>0||med.videoLinks?.length>0) && (
+                  <div style={{marginTop:9,display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {(med.driveLinks||[]).map((_,i)=><span key={"d"+i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:T.primary,background:T.primaryTint,borderRadius:7,padding:"4px 8px"}}><Icon name="camera" size={11} color={T.primary}/>照片</span>)}
+                    {(med.videoLinks||[]).map((_,i)=><span key={"v"+i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:"#7C3AED",background:"#F1E9FE",borderRadius:7,padding:"4px 8px"}}><Icon name="video" size={11} color="#7C3AED"/>影片</span>)}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      <SectionHead>匯出</SectionHead>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <ExportBtn icon="download" label="下載 HTML" sub="可離線・可列印" onClick={doExportHTML}/>
+        <ExportBtn icon="doc" label="Google Doc" sub={accessToken?"建立雲端文件":"需先連接 Drive"} dim={!accessToken} loading={exportingDoc} onClick={()=>accessToken?doExportGoogleDoc():tokenClient?.requestAccessToken()}/>
+      </div>
+    </div>
+  );
+}
+function ExportBtn({ icon, label, sub, onClick, dim, loading }) {
+  return (
+    <div onClick={!loading?onClick:undefined} style={{cursor:loading?"default":"pointer",background:T.surface,border:`1px solid ${T.hair}`,borderRadius:15,padding:"15px",opacity:dim?.6:1,boxShadow:"0 1px 2px rgba(27,25,48,.04)"}}>
+      {loading?<div className="cc-spin" style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${T.hair}`,borderTopColor:T.primary}}/>:<Icon name={icon} size={20} color={T.primary}/>}
+      <div style={{marginTop:9,fontSize:14,fontWeight:700,color:T.ink}}>{label}</div>
+      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{loading?"處理中…":sub}</div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BADGE / CHECK-IN SCREEN（報到資訊）
+// ══════════════════════════════════════════════════════════════════════════════
+function BadgeScreen({ S }) {
+  const conf    = getCONF();
+  const { activeKey } = S;
+  const IMG_KEY = `ccx_badge_img_${activeKey}`;
+  const NUM_KEY = `ccx_regnum_${activeKey}`;
+
+  const [badgeImg,  setBadgeImg]  = useState(() => localStorage.getItem(IMG_KEY) || null);
+  const [regNum,    setRegNum]    = useState(() => localStorage.getItem(NUM_KEY) || "");
+  const [numInput,  setNumInput]  = useState(() => localStorage.getItem(NUM_KEY) || "");
+  const [editNum,   setEditNum]   = useState(false);
+  const [compressing, setComp]    = useState(false);
+  const [copied,    setCopied]    = useState(false);
+  const camRef = useRef(null);
+  const libRef = useRef(null);
+
+  // 壓縮圖片（避免 localStorage 超量）
+  const compress = (file) => new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 900;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      cv.getContext("2d").drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(cv.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setComp(true);
+    try {
+      const b64 = await compress(file);
+      localStorage.setItem(IMG_KEY, b64);
+      setBadgeImg(b64);
+    } catch { S.toast("圖片處理失敗，請再試一次"); }
+    setComp(false);
+    e.target.value = "";
+  };
+
+  const clearImg = () => { localStorage.removeItem(IMG_KEY); setBadgeImg(null); };
+
+  const saveNum = () => {
+    const v = numInput.trim();
+    if (v) localStorage.setItem(NUM_KEY, v); else localStorage.removeItem(NUM_KEY);
+    setRegNum(v); setEditNum(false);
+  };
+  const copyNum = () => {
+    navigator.clipboard?.writeText(regNum).catch(()=>{});
+    setCopied(true); setTimeout(()=>setCopied(false), 2000);
+  };
+
+  const btn = (bg, color, extra={}) => ({ border:"none", cursor:"pointer", borderRadius:9, padding:"9px 16px", fontSize:12.5, fontWeight:600, fontFamily:FONT_SANS, background:bg, color, ...extra });
+
+  return (
+    <div style={{padding:"4px 16px 24px"}}>
+
+      {/* ── 入場憑證（截圖 / 圖片） ── */}
+      <Card pad={16}>
+        <div style={{fontSize:11.5,fontWeight:700,letterSpacing:".8px",color:T.muted,marginBottom:14}}>入場憑證</div>
+
+        {/* hidden file inputs */}
+        <input ref={camRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handleFile}/>
+        <input ref={libRef} type="file" accept="image/*"                       style={{display:"none"}} onChange={handleFile}/>
+
+        {badgeImg ? (
+          /* 已有圖片 — 顯示截圖 */
+          <>
+            <div style={{borderRadius:14,overflow:"hidden",border:`1px solid ${T.hair}`,marginBottom:12}}>
+              <img src={badgeImg} alt="入場憑證" style={{width:"100%",display:"block"}}/>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>libRef.current?.click()} style={btn(T.primaryTint, T.primary)}>重新上傳</button>
+              <button onClick={()=>camRef.current?.click()} style={btn(T.surfaceAlt, T.ink2)}>拍照</button>
+              <button onClick={clearImg} style={btn("transparent", T.faint, {marginLeft:"auto"})}>清除</button>
+            </div>
+          </>
+        ) : compressing ? (
+          /* 壓縮中 */
+          <div style={{padding:"32px 0",textAlign:"center",color:T.muted,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+            <div className="cc-spin" style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${T.hair}`,borderTopColor:T.primary}}/>
+            處理圖片中…
+          </div>
+        ) : (
+          /* 空白佔位 */
+          <div style={{border:`1.5px dashed ${T.hair}`,borderRadius:14,padding:"28px 16px",textAlign:"center",background:T.surfaceAlt}}>
+            <div style={{fontSize:40,marginBottom:12,lineHeight:1}}>📧</div>
+            <div style={{fontSize:14,fontWeight:600,color:T.ink,marginBottom:6}}>上傳報名確認截圖</div>
+            <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:18}}>
+              截圖報名成功信件中的 QR code<br/>或確認頁面，儲存在這裡方便報到時出示
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+              <button onClick={()=>libRef.current?.click()} style={btn(T.primary, T.onPrimary, {boxShadow:"0 6px 16px -10px "+T.primary})}>
+                從相簿選擇
+              </button>
+              <button onClick={()=>camRef.current?.click()} style={btn(T.surfaceAlt, T.ink2, {border:`1px solid ${T.hair}`})}>
+                直接拍照
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── 報名號碼（選填） ── */}
+        <div style={{marginTop:16,paddingTop:16,borderTop:`1px solid ${T.hair2}`}}>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:".5px",color:T.muted,marginBottom:10}}>報名號碼（選填）</div>
+          {editNum ? (
+            <div style={{display:"flex",gap:7}}>
+              <input value={numInput} onChange={e=>setNumInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveNum()}
+                placeholder="輸入號碼…" autoFocus
+                style={{flex:1,border:`1.5px solid ${T.primary}`,borderRadius:9,padding:"9px 12px",fontSize:15,fontFamily:FONT_SANS,background:T.surfaceAlt,color:T.ink,outline:"none",letterSpacing:2}}/>
+              <button onClick={saveNum} style={btn(T.primary, T.onPrimary)}>儲存</button>
+              <button onClick={()=>setEditNum(false)} style={btn(T.surfaceAlt, T.muted)}>取消</button>
+            </div>
+          ) : (
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              {regNum
+                ? <div style={{fontFamily:FONT_SERIF,fontSize:22,fontWeight:700,color:T.primary,letterSpacing:4,flex:1}}>{regNum}</div>
+                : <div style={{fontSize:13,color:T.faint,flex:1}}>尚未輸入</div>
+              }
+              <button onClick={()=>{setNumInput(regNum);setEditNum(true);}} style={btn(T.surfaceAlt, T.ink2, {padding:"7px 12px"})}>
+                {regNum?"修改":"新增"}
+              </button>
+              {regNum && (
+                <button onClick={copyNum} style={btn(copied?"#E6F6F0":T.primaryTint, copied?"#0A6E50":T.primary, {padding:"7px 12px"})}>
+                  {copied?"已複製 ✓":"複製"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* ── 報到資訊 ── */}
+      <SectionHead>報到資訊</SectionHead>
+      <Card pad={6}>
+        {conf.registration && <InfoRow icon="clock" label="報到時間" value={conf.registration}/>}
+        <InfoRow icon="pin" label={conf.venue} value={conf.venueAddr||""}/>
+        <InfoRow icon="map" label="Google 地圖導航" link onClick={()=>window.open(conf.mapsUrl,"_blank")} last/>
+      </Card>
+
+      {/* ── 積分說明 ── */}
+      {conf.credits && <>
+        <SectionHead>積分說明</SectionHead>
+        <Card pad={14}>
+          <div style={{fontSize:13,color:T.ink2,lineHeight:1.7}}>{conf.credits}</div>
+        </Card>
+      </>}
+
+      {/* ── 聯絡 / 連結 ── */}
+      {conf.links.length > 0 && <>
+        <SectionHead>聯絡 / 連結</SectionHead>
+        <Card pad={6}>
+          {conf.links.map(([label,url],i)=>(
+            <InfoRow key={i} icon="link" label={label} link onClick={()=>window.open(url,"_blank")} last={i===conf.links.length-1}/>
+          ))}
+        </Card>
+      </>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LOADING SCREEN
+// ══════════════════════════════════════════════════════════════════════════════
+function LoadingScreen() {
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:T.paper,fontFamily:FONT_SANS}}>
+      <div style={{width:52,height:52,borderRadius:16,background:`linear-gradient(135deg,${T.heroFrom},${T.heroTo})`,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:20,boxShadow:"0 12px 30px -10px rgba(49,46,129,.6)"}}>
+        <Icon name="calendar" size={26} color="#fff" stroke={1.8}/>
+      </div>
+      <div style={{fontFamily:FONT_SERIF,fontSize:18,fontWeight:700,color:T.ink,marginBottom:8}}>會議助理</div>
+      <div style={{display:"flex",alignItems:"center",gap:8,color:T.muted,fontSize:13}}>
+        <div className="cc-spin" style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${T.hair}`,borderTopColor:T.primary}}/>
+        載入會議資料…
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// APP (主元件)
+// ══════════════════════════════════════════════════════════════════════════════
+function App() {
+  // ── 會議載入狀態 ────────────────────────────────────────────────────────────
+  const [appLoading, setAppLoading]     = useState(true);
+  const [allConfigs, setAllConfigs]     = useState({});
+  const [activeKey, setActiveKey]       = useState(null);
+  const [showSwitcher, setShowSwitcher] = useState(false);
+
+  // ── 一般 UI 狀態 ─────────────────────────────────────────────────────────────
+  const [tab, setTab]               = useState("home");
+  const [curDay, setCurDay]         = useState(null);
+  const [notes, setNotes]           = useState({});
+  const [media, setMedia]           = useState({});
+  const [updates, setUpdates]       = useState({});
+  const [reminders, setRem]         = useState({});
+  const [expanded, setExpanded]     = useState({});
+  const [filter, setFilter]         = useState("all");
+  const [hasDot, setHasDot]         = useState(false); // kept for future use
+  const [toast, setToast]           = useState(null);
+  const [uploading, setUploading]   = useState({});
+  const [exportingDoc, setExportingDoc] = useState(false);
+
+  // ── Google Auth ───────────────────────────────────────────────────────────
   const [accessToken, setAccessToken] = useState(null);
   const [userEmail, setUserEmail]     = useState(null);
   const [tokenClient, setTokenClient] = useState(null);
   const [syncStatus, setSyncStatus]   = useState("idle");
-
-  // Stable refs for Drive IDs (avoids stale closures)
+  const accessTokenRef = useRef(null);
   const driveRootIdRef = useRef(null);
   const driveFileIdRef = useRef(null);
-  const accessTokenRef = useRef(null);
 
-  const startDate = new Date(C_CFG.startDate);
-  const daysLeft  = Math.ceil((startDate - new Date()) / 86400000);
+  const scrollRef     = useRef(null);
+  const pendingScroll = useRef(null);
 
-  const CC = {
-    acc: "#4338CA", accL: "#EEF0FD", teal: "#065F46", tealL: "#ECFDF5",
-    blue: "#1E40AF", blueL: "#EFF6FF", amb: "#92400E", ambL: "#FFFBEB",
-    grn: "#14532D", grnL: "#F0FDF4", red: "#7F1D1D", redL: "#FEF2F2",
-    border: "1px solid #E7E5E4", muted: "#78716C",
-  };
-
-  // ── Google Identity Services ───────────────────────────────────────────────
+  // ── 初始化：載入所有會議 ─────────────────────────────────────────────────────
   useEffect(() => {
+    loadAllConferences().then(configs => {
+      const best = autoSelectConference(configs);
+      activateConference(configs[best]);
+      setAllConfigs(configs);
+      setActiveKey(best);
+      setCurDay(Object.keys(configs[best].sessions||{})[0]);
+      // 載入該會議的 localStorage
+      setNotes(loadLS(getNK()));
+      setMedia(loadLS(getMK()));
+      setUpdates(loadLS(getUK()));
+      setRem(()=>{ try{return JSON.parse(localStorage.getItem("ccx_rem_"+best)||"{}");}catch{return {};} });
+      setAppLoading(false);
+    });
+  }, []);
+
+  // ── 切換會議 ──────────────────────────────────────────────────────────────
+  const switchConference = useCallback((key) => {
+    if (key === activeKey) { setShowSwitcher(false); return; }
+    activateConference(allConfigs[key]);
+    setActiveKey(key);
+    setShowSwitcher(false);
+    setCurDay(Object.keys(allConfigs[key].sessions||{})[0]);
+    // 重新載入該會議的資料
+    setNotes(loadLS(getNK()));
+    setMedia(loadLS(getMK()));
+    setUpdates(loadLS(getUK()));
+    setRem(()=>{ try{return JSON.parse(localStorage.getItem("ccx_rem_"+key)||"{}");}catch{return {};} });
+    // 重設 UI 狀態
+    setExpanded({}); setFilter("all"); setTab("home"); setHasDot(false);
+    // 重設 Drive（不同會議、不同資料夾）
+    setAccessToken(null); setUserEmail(null); setSyncStatus("idle");
+    accessTokenRef.current=null; driveRootIdRef.current=null; driveFileIdRef.current=null;
+    showToast(`已切換至 ${allConfigs[key].name}`);
+  }, [activeKey, allConfigs]);
+
+  // ── Scroll reset ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (pendingScroll.current) {
+      const id=pendingScroll.current; pendingScroll.current=null;
+      requestAnimationFrame(()=>{ const el=document.getElementById("sess-"+id); if(el&&scrollRef.current) scrollRef.current.scrollTop=Math.max(0,el.offsetTop-76); });
+    } else if (scrollRef.current) { scrollRef.current.scrollTop=0; }
+  }, [tab]);
+
+  // ── Persist reminders ─────────────────────────────────────────────────────
+  useEffect(() => { if(activeKey) localStorage.setItem("ccx_rem_"+activeKey,JSON.stringify(reminders)); }, [reminders, activeKey]);
+
+  const showToast = msg => { setToast(msg); setTimeout(()=>setToast(null),2200); };
+
+  const daysLeft = appLoading ? 0 : Math.max(0, Math.ceil((new Date(_C_CFG?.startDate) - new Date()) / 86400000));
+
+  // ── Google Identity Services ──────────────────────────────────────────────
+  useEffect(() => {
+    if (appLoading) return;
     const init = () => {
       if (!window.google?.accounts?.oauth2) return;
       const tc = window.google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: DRIVE_SCOPE,
+        client_id: GOOGLE_CLIENT_ID, scope: DRIVE_SCOPE,
         callback: async (resp) => {
-          if (resp.error) { console.error("OAuth:", resp.error); return; }
-          accessTokenRef.current = resp.access_token;
-          setAccessToken(resp.access_token);
-          try {
-            const r = await fetch("https://www.googleapis.com/oauth2/v1/userinfo", {
-              headers: { Authorization: `Bearer ${resp.access_token}` }
-            });
-            const u = await r.json();
-            setUserEmail(u.email);
-          } catch {}
+          if (resp.error) { console.error("OAuth:",resp.error); return; }
+          accessTokenRef.current=resp.access_token; setAccessToken(resp.access_token);
+          try { const r=await fetch("https://www.googleapis.com/oauth2/v1/userinfo",{headers:{Authorization:`Bearer ${resp.access_token}`}}); const u=await r.json(); setUserEmail(u.email); } catch {}
           await loadNotesFromDrive(resp.access_token);
         }
       });
       setTokenClient(tc);
     };
     if (window.google?.accounts?.oauth2) init();
-    else {
-      const t = setInterval(() => { if (window.google?.accounts?.oauth2) { init(); clearInterval(t); } }, 300);
-      return () => clearInterval(t);
-    }
-  }, []);
+    else { const t=setInterval(()=>{ if(window.google?.accounts?.oauth2){init();clearInterval(t);} },300); return ()=>clearInterval(t); }
+  }, [appLoading, activeKey]);
 
-  // ── Drive: load notes ──────────────────────────────────────────────────────
+  // ── Drive: load ───────────────────────────────────────────────────────────
   const loadNotesFromDrive = async (token) => {
-    setSyncStatus("syncing");
+    const cfg=getCFG(); setSyncStatus("syncing");
     try {
-      const rootFolder = await getOrCreateFolder(token, C_CFG.driveFolderName, null);
-      driveRootIdRef.current = rootFolder.id;
-      const file = await findFile(token, C_CFG.notesFileName, rootFolder.id);
+      const rootFolder=await getOrCreateFolder(token,cfg.driveFolderName,null);
+      driveRootIdRef.current=rootFolder.id;
+      const file=await findFile(token,cfg.notesFileName,rootFolder.id);
       if (file) {
-        driveFileIdRef.current = file.id;
-        const data = await readJsonFile(token, file.id);
-        if (data?.notes) { persist(NK, data.notes); setNotes(data.notes); }
-        if (data?.media) { persist(MK, data.media); setMedia(data.media); }
+        driveFileIdRef.current=file.id;
+        const data=await readJsonFile(token,file.id);
+        if(data?.notes){saveLS(getNK(),data.notes);setNotes(data.notes);}
+        if(data?.media){saveLS(getMK(),data.media);setMedia(data.media);}
       }
       setSyncStatus("done");
-    } catch (e) { console.error("Drive load:", e); setSyncStatus("error"); }
+    } catch(e){console.error("Drive load:",e);setSyncStatus("error");}
   };
 
-  // ── Drive: save notes ──────────────────────────────────────────────────────
+  // ── Drive: save ───────────────────────────────────────────────────────────
   const saveToDrive = useCallback(async (newNotes, newMedia) => {
-    if (!accessTokenRef.current || !driveRootIdRef.current) return;
-    setSyncStatus("syncing");
+    if (!accessTokenRef.current||!driveRootIdRef.current) return;
+    const cfg=getCFG(); setSyncStatus("syncing");
     try {
-      const data = { notes: newNotes, media: newMedia, conference: C_CFG.name, savedAt: new Date().toISOString() };
-      const result = await writeJsonFile(
-        accessTokenRef.current, C_CFG.notesFileName, data,
-        driveRootIdRef.current, driveFileIdRef.current
-      );
-      if (!driveFileIdRef.current && result?.id) driveFileIdRef.current = result.id;
+      const data={notes:newNotes,media:newMedia,conference:cfg.name,savedAt:new Date().toISOString()};
+      const result=await writeJsonFile(accessTokenRef.current,cfg.notesFileName,data,driveRootIdRef.current,driveFileIdRef.current);
+      if(!driveFileIdRef.current&&result?.id) driveFileIdRef.current=result.id;
       setSyncStatus("done");
-    } catch (e) { console.error("Drive save:", e); setSyncStatus("error"); }
+    } catch(e){console.error("Drive save:",e);setSyncStatus("error");}
   }, []);
 
-  // ── Note & media save ──────────────────────────────────────────────────────
-  const saveNoteF = (id, txt) => {
-    const n = { ...load(NK) };
-    if (txt.trim()) n[id] = txt; else delete n[id];
-    persist(NK, n); setNotes(n);
-    saveToDrive(n, load(MK));
-  };
+  // ── Notes / media ops ─────────────────────────────────────────────────────
+  const saveNote = useCallback((id,txt) => {
+    const n={...loadLS(getNK())}; if(txt.trim())n[id]=txt; else delete n[id];
+    saveLS(getNK(),n); setNotes(n); saveToDrive(n,loadLS(getMK()));
+  }, [saveToDrive]);
 
-  const saveMediaF = (id, data) => {
-    const m = { ...load(MK) };
-    const hasContent = (data.driveLinks?.length || 0) + (data.videoLinks?.length || 0) > 0;
-    if (hasContent) m[id] = data; else delete m[id];
-    persist(MK, m); setMedia(m);
-    saveToDrive(load(NK), m);
-  };
+  const addMediaLink = useCallback((id,type,link) => {
+    const m={...loadLS(getMK())}; const cur=m[id]||{driveLinks:[],videoLinks:[]};
+    if(type==="drive")cur.driveLinks=[...(cur.driveLinks||[]),link]; else cur.videoLinks=[...(cur.videoLinks||[]),link];
+    m[id]=cur; saveLS(getMK(),m); setMedia(m); saveToDrive(loadLS(getNK()),m);
+  }, [saveToDrive]);
 
-  // ── Camera / upload ────────────────────────────────────────────────────────
-  const handleFileCapture = async (id, sessionTitle, fileInput) => {
-    if (!accessTokenRef.current) { alert("請先登入 Google，才能直接上傳到 Drive"); return; }
-    const files = Array.from(fileInput.files || []);
-    if (!files.length) return;
-    setUploading(p => ({ ...p, [id]: true }));
+  const removeMediaLink = useCallback((id,type,idx) => {
+    const m={...loadLS(getMK())}; const cur=m[id]||{driveLinks:[],videoLinks:[]};
+    if(type==="drive")cur.driveLinks=(cur.driveLinks||[]).filter((_,i)=>i!==idx);
+    else cur.videoLinks=(cur.videoLinks||[]).filter((_,i)=>i!==idx);
+    const has=(cur.driveLinks?.length||0)+(cur.videoLinks?.length||0)>0;
+    if(has)m[id]=cur; else delete m[id];
+    saveLS(getMK(),m); setMedia(m); saveToDrive(loadLS(getNK()),m);
+  }, [saveToDrive]);
+
+  const handleCapture = useCallback(async (id,sessionTitle,fileInput) => {
+    if (!accessTokenRef.current){showToast("請先登入 Google 帳號");return;}
+    const files=Array.from(fileInput.files||[]); if(!files.length)return;
+    setUploading(p=>({...p,[id]:true}));
     try {
-      const med = media[id] || { driveLinks: [], videoLinks: [] };
-      const newDriveLinks = [...(med.driveLinks || [])];
-      const newVideoLinks = [...(med.videoLinks || [])];
-      for (const file of files) {
-        const isVideo = file.type.startsWith("video/");
-        const result  = await uploadMediaFile(accessTokenRef.current, file, sessionTitle);
-        const timeStr = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" });
-        const label   = `${sessionTitle.substring(0, 15)} ${isVideo ? "錄影" : "照片"} ${timeStr}`;
-        if (isVideo) newVideoLinks.push({ url: result.webViewLink, label });
-        else         newDriveLinks.push({ url: result.webViewLink, label });
+      for(const file of files){
+        const isVideo=file.type.startsWith("video/");
+        const result=await uploadMediaFile(accessTokenRef.current,file,sessionTitle);
+        const timeStr=new Date().toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"});
+        addMediaLink(id,isVideo?"video":"drive",{url:result.webViewLink,label:`${sessionTitle.substring(0,15)} ${isVideo?"錄影":"照片"} ${timeStr}`});
       }
-      saveMediaF(id, { driveLinks: newDriveLinks, videoLinks: newVideoLinks });
-      setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; });
-    } catch (e) { alert("上傳失敗：" + e.message); console.error(e); }
-    setUploading(p => { const n = { ...p }; delete n[id]; return n; });
-  };
+      showToast("已上傳至 Drive");
+    } catch(e){showToast("上傳失敗："+e.message);}
+    setUploading(p=>{const n={...p};delete n[id];return n;});
+  }, [addMediaLink]);
 
-  // ── Auto-update ────────────────────────────────────────────────────────────
-  const fetchAndAnalyze = useCallback(async (label) => {
-    if (isUpdating) return;
-    setIsUpdating(true); setView("update");
-    let fetched = "";
-    for (const url of C_CFG.updateUrls) {
-      try {
-        const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
-        if (r.ok) {
-          const d = await r.json();
-          const tmp = document.createElement("div"); tmp.innerHTML = d.contents || "";
-          fetched += `\n=== ${url} ===\n` + (tmp.innerText || "").replace(/\s+/g, " ").substring(0, 2500);
-        }
-      } catch { fetched += `\n=== ${url} ===\n[無法抓取]`; }
-    }
-    try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 1000,
-          messages: [{ role: "user", content:
-            `你是${C_CFG.specialistProfile}的大會助理。以下是${C_CFG.name}官網最新內容（${label}）：\n${fetched}\n\n請用繁體中文：\n【1.議程異動】比對重點場次（${C_CFG.keySessionsDesc}）是否有異動。若無說「目前無重大議程異動」。\n【2.新增講者】若無說「無新增講者」。\n【3.每日建議】針對${C_CFG.specialistProfile}，給每天最重要1–2個場次。\n【4.行前提示】一句話30字以內總結。\n請直接回答，不加前言。`
-          }]
-        })
-      });
-      const data = await resp.json();
-      const result = data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "無法取得分析結果";
-      const now  = new Date().toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-      const cpKey = daysLeft <= 1 ? "d1" : daysLeft <= 3 ? "d3" : daysLeft <= 7 ? "w1" : "manual";
-      const upd  = { ...load(UK), [cpKey]: { time: now, label, result }, lastCheck: { time: now, label } };
-      persist(UK, upd); setUpdates(upd);
-    } catch {
-      const now = new Date().toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-      const upd = { ...load(UK), lastCheck: { time: now, label, error: true } };
-      persist(UK, upd); setUpdates(upd);
-    }
-    setIsUpdating(false);
-  }, [isUpdating, daysLeft]);
 
-  useEffect(() => {
-    for (const cp of CHECKPOINTS) {
-      if (daysLeft <= cp.days && daysLeft > 0 && !load(UK)[cp.key]) {
-        setHasDot(true);
-        const t = setTimeout(() => fetchAndAnalyze(cp.label), 3000);
-        return () => clearTimeout(t);
-      }
-    }
-  }, []);
-
-  // ── Exports ────────────────────────────────────────────────────────────────
+  // ── Exports ───────────────────────────────────────────────────────────────
   const doExportHTML = () => {
-    const html = generateExportHTML(load(NK), load(MK));
-    const safe = C_CFG.driveFolderName;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
-    a.download = `${safe}_筆記_${new Date().toLocaleDateString("zh-TW").replace(/\//g, "-")}.html`;
-    a.click();
-    setExportDone(true); setTimeout(() => setExportDone(false), 3000);
+    const html=generateExportHTML(loadLS(getNK()),loadLS(getMK()));
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([html],{type:"text/html;charset=utf-8"}));
+    a.download=`${getCFG()?.driveFolderName}_筆記_${new Date().toLocaleDateString("zh-TW").replace(/\//g,"-")}.html`;
+    a.click(); showToast("HTML 筆記已下載");
   };
-
   const doExportGoogleDoc = async () => {
-    if (!accessTokenRef.current) { alert("請先登入 Google 帳號"); return; }
+    if (!accessTokenRef.current){showToast("請先登入 Google 帳號");return;}
     setExportingDoc(true);
-    try {
-      const url = await exportToGoogleDoc(accessTokenRef.current, load(NK), load(MK));
-      window.open(url, "_blank");
-    } catch (e) { alert("建立 Google Doc 失敗：" + e.message); }
+    try{ const url=await exportToGoogleDoc(accessTokenRef.current,loadLS(getNK()),loadLS(getMK())); window.open(url,"_blank"); showToast("Google Doc 已建立"); }
+    catch(e){ showToast("建立 Google Doc 失敗："+e.message); }
     setExportingDoc(false);
   };
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  const filterItems = (items) => {
-    if (!items) return [];
-    if (curFilter === "all")      return items;
-    if (curFilter === "star")     return items.filter(i => i.tags.includes("star"));
-    if (curFilter === "prenatal") return items.filter(i => i.tags.includes("prenatal"));
-    if (curFilter === "cyto")     return items.filter(i => i.tags.includes("cyto"));
-    if (curFilter === "notes")    return items.filter(i => notes[i.id] || media[i.id]);
-    return items;
+  // ── Loading 畫面 ──────────────────────────────────────────────────────────
+  if (appLoading) return <LoadingScreen/>;
+
+  const conf = getCONF();
+  const multiConf = Object.keys(allConfigs).length > 1;
+  const notesBadge = Object.keys(notes).length + Object.values(media).reduce((a,m)=>a+(m.driveLinks?.length||0)+(m.videoLinks?.length||0),0);
+
+  const S = {
+    daysLeft, tab, notes, media, reminders, uploading, filter, expanded, curDay, syncStatus, accessToken, userEmail, tokenClient, exportingDoc,
+    activeKey,
+    setFilter, setCurDay,
+    saveNote, addMediaLink, removeMediaLink, handleCapture,
+    toggleReminder: i=>setRem(p=>({...p,[i]:!p[i]})),
+    toggleExpand:   id=>setExpanded(p=>({...p,[id]:!p[id]})),
+    goTo:       t=>setTab(t),
+    goSession:  id=>{ pendingScroll.current=id; setExpanded(p=>({...p,[id]:true})); setTab("sched"); },
+    doExportHTML, doExportGoogleDoc,
+    toast:      showToast,
+    onSwitchConference: ()=>setShowSwitcher(true),
+    multiConf,
   };
 
-  // ── UI atoms ───────────────────────────────────────────────────────────────
-  const Tag = ({ t }) => {
-    const s = t === "star"     ? [CC.ambL, CC.amb, "⭐ 推薦"]
-            : t === "prenatal" ? [CC.tealL, CC.teal, "🧬 產前"]
-            :                    [CC.blueL, CC.blue, "🔬 細胞遺傳"];
-    return <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 4, background: s[0], color: s[1], marginRight: 3, display: "inline-block" }}>{s[2]}</span>;
-  };
-
-  const SyncBadge = () => {
-    if (!accessToken) return null;
-    const map = {
-      syncing: ["#FEF3C7", "#B45309", "⏳ 同步中"],
-      done:    ["#D1FAE5", "#065F46", "☁ 已同步"],
-      error:   ["#FEE2E2", "#7F1D1D", "⚠ 失敗"],
-    };
-    const s = map[syncStatus];
-    if (!s) return null;
-    return <span style={{ fontSize: 10, background: s[0], color: s[1], padding: "1px 7px", borderRadius: 10, fontWeight: 600, marginLeft: 4 }}>{s[2]}</span>;
-  };
-
-  const LoginBanner = () => {
-    if (accessToken) return (
-      <div style={{ background: CC.grnL, border: "1px solid #6EE7B7", borderRadius: 10, padding: "10px 14px", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: CC.grn }}>☁ 已連接 Google Drive</div>
-          <div style={{ fontSize: 11, color: CC.muted, marginTop: 1 }}>{userEmail} · 筆記自動同步至 {C_CFG.driveFolderName}/</div>
-        </div>
-        <SyncBadge />
-      </div>
-    );
-    return (
-      <div style={{ background: CC.accL, border: "1px solid #C7D2FE", borderRadius: 10, padding: "12px 14px", marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: CC.acc, marginBottom: 3 }}>🔗 連接 Google Drive</div>
-        <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5, marginBottom: 10 }}>登入後可跨裝置同步筆記、直接拍照上傳 Drive、匯出為 Google Doc</div>
-        <button onClick={() => tokenClient?.requestAccessToken()} disabled={!tokenClient}
-          style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 8, padding: "9px 0", fontSize: 13, fontWeight: 600, cursor: tokenClient ? "pointer" : "not-allowed", width: "100%", opacity: tokenClient ? 1 : 0.5 }}>
-          {tokenClient ? "🔑 Google 帳號登入授權" : "⏳ 載入中..."}
-        </button>
-      </div>
-    );
-  };
-
-  // ── MediaEditor ────────────────────────────────────────────────────────────
-  const MediaEditor = ({ id, sessionTitle }) => {
-    const med       = draftMedia[id] || media[id] || { driveLinks: [], videoLinks: [] };
-    const cameraRef = useRef(null);
-    const videoRef  = useRef(null);
-    const libRef    = useRef(null);
-    const [doneType, setDoneType] = React.useState(null); // null | "photo" | "video"
-    const update = (patch) => setDraftMedia(p => ({ ...p, [id]: { ...med, ...patch } }));
-
-    const removeLink = (type, idx) => {
-      const key = type === "drive" ? "driveLinks" : "videoLinks";
-      const arr = [...(med[key] || [])]; arr.splice(idx, 1);
-      update({ [key]: arr });
-    };
-
-    const onCameraChange = async (e) => {
-      await handleFileCapture(id, sessionTitle, e.target);
-      e.target.value = "";
-      setDoneType("photo");
-      setTimeout(() => setDoneType(null), 6000);
-    };
-
-    const onVideoChange = async (e) => {
-      await handleFileCapture(id, sessionTitle, e.target);
-      e.target.value = "";
-      setDoneType("video");
-      setTimeout(() => setDoneType(null), 6000);
-    };
-
-    const onLibChange = (e) => {
-      handleFileCapture(id, sessionTitle, e.target);
-      e.target.value = "";
-    };
-
-    const isDirty  = JSON.stringify(draftMedia[id]) !== JSON.stringify(media[id]);
-    const isUp     = !!uploading[id];
-    const hasLinks = (med.driveLinks || []).length > 0 || (med.videoLinks || []).length > 0;
-
-    return (
-      <div style={{ marginTop: 10, paddingTop: 10, borderTop: CC.border }}>
-        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: CC.muted, marginBottom: 8 }}>
-          📎 媒體
-          {accessToken && <span style={{ fontSize: 10, fontWeight: 500, color: CC.teal, marginLeft: 6 }}>（已連接 Drive）</span>}
-        </div>
-
-        {accessToken && (
-          <div style={{ marginBottom: 10 }}>
-            {/* 拍照 input — capture 模式，每次一張 */}
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment"
-              style={{ display: "none" }} onChange={onCameraChange} />
-            {/* 錄影 input — capture 模式 */}
-            <input ref={videoRef} type="file" accept="video/*" capture="environment"
-              style={{ display: "none" }} onChange={onVideoChange} />
-            {/* 相簿 input — 批次多選（無 capture，允許選擇任何檔案）*/}
-            <input ref={libRef} type="file" accept="image/*,video/*" multiple
-              style={{ display: "none" }} onChange={onLibChange} />
-
-            {isUp ? (
-              <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, textAlign: "center", color: "#16A34A" }}>
-                ⏳ 上傳中，請稍候...
-              </div>
-            ) : doneType ? (
-              <div style={{ display: "flex", gap: 6 }}>
-                <div style={{ flex: 1, background: "#D1FAE5", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, textAlign: "center", color: "#059669" }}>
-                  ✅ 上傳成功！
-                </div>
-                {doneType === "photo" ? (
-                  <button onClick={() => { setDoneType(null); cameraRef.current?.click(); }}
-                    style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                    📷 再拍一張
-                  </button>
-                ) : (
-                  <button onClick={() => { setDoneType(null); videoRef.current?.click(); }}
-                    style={{ flex: 1, background: "#7C3AED", color: "#fff", border: "none", borderRadius: 9, padding: "10px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                    🎥 再錄一段
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div style={{ display: "flex", gap: 5 }}>
-                <button onClick={() => cameraRef.current?.click()}
-                  style={{ flex: 1, background: CC.teal, color: "#fff", border: "none", borderRadius: 9, padding: "9px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                  📷 拍照
-                </button>
-                <button onClick={() => videoRef.current?.click()}
-                  style={{ flex: 1, background: "#7C3AED", color: "#fff", border: "none", borderRadius: 9, padding: "9px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                  🎥 錄影
-                </button>
-                <button onClick={() => libRef.current?.click()}
-                  style={{ flex: 1, background: CC.acc, color: "#fff", border: "none", borderRadius: 9, padding: "9px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                  🖼️ 批次
-                </button>
-              </div>
-            )}
-            {isUp && <div style={{ fontSize: 11, color: CC.teal, marginTop: 5, textAlign: "center" }}>正在上傳至 {C_CFG.driveFolderName}/{sessionTitle.substring(0, 20)}...</div>}
-          </div>
-        )}
-
-        {hasLinks && (
-          <div style={{ marginBottom: 8 }}>
-            {(med.driveLinks || []).map((lk, i) => (
-              <div key={"d"+i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                <a href={lk.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.acc, background: CC.accL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📷 {lk.label}</a>
-                <button onClick={() => removeLink("drive", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
-              </div>
-            ))}
-            {(med.videoLinks || []).map((vl, i) => (
-              <div key={"v"+i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                <a href={vl.url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: CC.teal, background: CC.tealL, borderRadius: 6, padding: "4px 9px", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>▶ {vl.label}</a>
-                <button onClick={() => removeLink("video", i)} style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 18, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {isDirty && (
-          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 4 }}>
-            <button onClick={() => setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; })} style={{ background: "none", border: CC.border, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: CC.muted }}>取消</button>
-            <button onClick={() => { saveMediaF(id, draftMedia[id] || {}); setDraftMedia(p => { const n = { ...p }; delete n[id]; return n; }); }} style={{ background: CC.teal, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>儲存</button>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ── Schedule View ──────────────────────────────────────────────────────────
-  const ScheduleView = () => (
-    <div style={{ padding: "8px 10px 16px" }}>
-      {SESSIONS[curDay].map((bl, bi) => {
-        if (bl.brk) return (curFilter === "all" || curFilter === "notes")
-          ? <div key={bi} style={{ padding: "5px 4px", fontSize: 11, color: "#aaa", fontStyle: "italic", textAlign: "center", margin: "2px 0" }}>{bl.brk}</div>
-          : null;
-        const items = filterItems(bl.items);
-        if (!items.length) return null;
-
-        // ── 並行場次：橫向卡片滑動 ──────────────────────────────
-        if (bl.parallel) {
-          return (
-            <div key={bi} style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 10, fontWeight: 600, color: "#bbb", letterSpacing: ".5px", textTransform: "uppercase", padding: "7px 2px 2px", display: "flex", alignItems: "center", gap: 6 }}>
-                {bl.time}
-                <span style={{ background: "#EFF6FF", color: "#1E40AF", borderRadius: 4, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>⚡ 並行 {bl.items?.length || items.length} 場</span>
-              </div>
-              <div style={{ fontSize: 10, color: "#ccc", marginBottom: 5, paddingLeft: 2 }}>← 左右滑動查看全部場次</div>
-              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 10, WebkitOverflowScrolling: "touch", alignItems: "flex-start" }}>
-                {items.map(it => {
-                  const bc      = BADGE[it.b] || BADGE.corp;
-                  const isOpen  = !!openCards[it.id];
-                  const hasNote = !!notes[it.id];
-                  const hasMed  = !!(media[it.id]?.driveLinks?.length || media[it.id]?.videoLinks?.length);
-                  const bdr     = hasNote ? "2px solid #F59E0B" : hasMed ? `2px solid ${CC.teal}` : CC.border;
-                  return (
-                    <div key={it.id} style={{ minWidth: 210, width: 210, background: "#fff", border: bdr, borderRadius: 10, flexShrink: 0, overflow: "hidden" }}>
-                      <div onClick={() => setOpenCards(p => ({ ...p, [it.id]: !p[it.id] }))} style={{ padding: "9px 10px", cursor: "pointer" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: bc.bg, color: bc.c }}>{it.l}</span>
-                          <span style={{ color: "#ccc", fontSize: 14, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
-                        </div>
-                        <div style={{ fontSize: 12, fontWeight: 500, lineHeight: 1.35, marginBottom: 3 }}>{it.title}</div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
-                          {it.tags.map(t => <Tag key={t} t={t} />)}
-                          {hasNote && <span style={{ fontSize: 10, background: "#FFFBEB", color: "#92400E", borderRadius: 4, padding: "1px 5px" }}>📝</span>}
-                          {hasMed  && <span style={{ fontSize: 10, background: CC.tealL, color: CC.teal, borderRadius: 4, padding: "1px 5px" }}>📎</span>}
-                        </div>
-                      </div>
-                      {isOpen && (
-                        <div style={{ padding: "0 10px 10px", borderTop: CC.border }} onClick={e => e.stopPropagation()}>
-                          <div style={{ fontSize: 11, color: "#555", lineHeight: 1.6, marginTop: 7, whiteSpace: "pre-line" }}>{it.detail}</div>
-                          {it.speakers?.length > 0 && it.speakers[0] !== "（詳見大會APP）" && (
-                            <div style={{ marginTop: 6, paddingTop: 6, borderTop: CC.border }}>
-                              {it.speakers.map(s => <span key={s} style={{ display: "inline-block", background: "#F5F5F4", border: CC.border, borderRadius: 20, padding: "2px 8px", fontSize: 10, margin: "2px" }}>{s}</span>)}
-                            </div>
-                          )}
-                          {it.link && <a href={it.link} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 11, display: "inline-block", marginTop: 5 }}>大會APP →</a>}
-                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: CC.border }}>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: CC.muted }}>📝 筆記</div>
-                              <SyncBadge />
-                            </div>
-                            <textarea
-                              value={draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || "")}
-                              onChange={e => setDraftNotes(p => ({ ...p, [it.id]: e.target.value }))}
-                              placeholder="記錄重點..."
-                              style={{ width: "100%", border: CC.border, borderRadius: 6, padding: "7px 8px", fontSize: 11, background: "#FAFAF8", resize: "vertical", minHeight: 52, fontFamily: "inherit", lineHeight: 1.5, outline: "none" }}
-                            />
-                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginTop: 3 }}>
-                              <button onClick={() => { setDraftNotes(p => ({ ...p, [it.id]: "" })); saveNoteF(it.id, ""); }}
-                                style={{ background: "none", border: CC.border, borderRadius: 5, padding: "4px 8px", fontSize: 10, cursor: "pointer", color: CC.muted }}>清除</button>
-                              <button onClick={() => { const v = draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || ""); saveNoteF(it.id, v); setDraftNotes(p => { const n = { ...p }; delete n[it.id]; return n; }); }}
-                                style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 5, padding: "4px 10px", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>儲存</button>
-                            </div>
-                          </div>
-                          <MediaEditor id={it.id} sessionTitle={it.title} />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        }
-
-        // ── 一般場次：垂直排列 ─────────────────────────────────
-        return (
-          <div key={bi}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "#bbb", letterSpacing: ".5px", textTransform: "uppercase", padding: "7px 2px 3px" }}>{bl.time}</div>
-            {items.map(it => {
-              const bc       = BADGE[it.b] || BADGE.corp;
-              const isOpen   = !!openCards[it.id];
-              const hasNote  = !!notes[it.id];
-              const hasMed   = !!(media[it.id]?.driveLinks?.length || media[it.id]?.videoLinks?.length);
-              const borderStyle = hasNote ? "2px solid #F59E0B" : hasMed ? `2px solid ${CC.teal}` : CC.border;
-              return (
-                <div key={it.id} style={{ background: "#fff", border: borderStyle, borderRadius: 10, marginBottom: 5, overflow: "hidden" }}>
-                  <div onClick={() => setOpenCards(p => ({ ...p, [it.id]: !p[it.id] }))} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 11px", cursor: "pointer" }}>
-                    <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, marginTop: 1, background: bc.bg, color: bc.c }}>{it.l}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.4 }}>{it.title}</div>
-                      <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", gap: 2 }}>
-                        {it.tags.map(t => <Tag key={t} t={t} />)}
-                        {hasNote && <span style={{ fontSize: 10, background: "#FFFBEB", color: "#92400E", borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>📝</span>}
-                        {hasMed  && <span style={{ fontSize: 10, background: CC.tealL, color: CC.teal, borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>📎</span>}
-                      </div>
-                    </div>
-                    <span style={{ color: "#ccc", fontSize: 15, marginTop: 1, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .18s", flexShrink: 0 }}>›</span>
-                  </div>
-                  {isOpen && (
-                    <div style={{ padding: "0 11px 12px", borderTop: CC.border }} onClick={e => e.stopPropagation()}>
-                      <div style={{ fontSize: 12, color: "#666", lineHeight: 1.65, marginTop: 8, whiteSpace: "pre-line" }}>{it.detail}</div>
-                      {it.speakers?.length > 0 && (
-                        <div style={{ marginTop: 7, paddingTop: 7, borderTop: CC.border }}>
-                          <div style={{ fontSize: 10, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>講者</div>
-                          {it.speakers.map(s => <span key={s} style={{ display: "inline-block", background: "#F5F5F4", border: CC.border, borderRadius: 20, padding: "2px 9px", fontSize: 11, margin: "2px" }}>{s}</span>)}
-                        </div>
-                      )}
-                      {it.link && <a href={it.link} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 12, display: "inline-block", marginTop: 6 }}>官方網站 →</a>}
-                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: CC.border }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: CC.muted }}>📝 我的筆記</div>
-                          <SyncBadge />
-                        </div>
-                        <textarea
-                          value={draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || "")}
-                          onChange={e => setDraftNotes(p => ({ ...p, [it.id]: e.target.value }))}
-                          placeholder="記錄重點、問題、聯繫人..."
-                          style={{ width: "100%", border: CC.border, borderRadius: 7, padding: "8px 9px", fontSize: 12, background: "#FAFAF8", resize: "vertical", minHeight: 68, fontFamily: "inherit", lineHeight: 1.55, outline: "none" }}
-                        />
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 5, marginTop: 4 }}>
-                          <button onClick={() => { setDraftNotes(p => ({ ...p, [it.id]: "" })); saveNoteF(it.id, ""); }} style={{ background: "none", border: CC.border, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: CC.muted }}>清除</button>
-                          <button onClick={() => {
-                            const v = draftNotes[it.id] !== undefined ? draftNotes[it.id] : (notes[it.id] || "");
-                            saveNoteF(it.id, v);
-                            setDraftNotes(p => { const n = { ...p }; delete n[it.id]; return n; });
-                          }} style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>儲存筆記</button>
-                        </div>
-                      </div>
-                      <MediaEditor id={it.id} sessionTitle={it.title} />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-
-  // ── Update View ────────────────────────────────────────────────────────────
-  const UpdateView = () => (
-    <div style={{ padding: "8px 10px 16px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 7, marginBottom: 10 }}>
-        {CHECKPOINTS.map(cp => {
-          const done   = !!updates[cp.key];
-          const active = !done && daysLeft <= cp.days + 1 && daysLeft > 0;
-          return (
-            <div key={cp.key} style={{ background: done ? CC.grnL : active ? CC.accL : "#F5F5F4", border: `1px solid ${done ? CC.grn : active ? CC.acc : "#E7E5E4"}`, borderRadius: 9, padding: "9px 7px", textAlign: "center" }}>
-              <div style={{ fontSize: 18 }}>{cp.icon}</div>
-              <div style={{ fontSize: 10, fontWeight: 600, color: done ? CC.grn : active ? CC.acc : "#aaa", marginTop: 3 }}>{cp.label}</div>
-              <div style={{ fontSize: 10, color: "#bbb", marginTop: 1 }}>{done ? "✓ 已完成" : daysLeft <= cp.days ? "建議執行" : `還有 ${daysLeft - cp.days} 天`}</div>
-            </div>
-          );
-        })}
-      </div>
-      {isUpdating && <div style={{ background: CC.blueL, color: CC.blue, borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>⏳ 正在抓取官網並進行 AI 分析中...</div>}
-      {!isUpdating && updates.lastCheck?.error && <div style={{ background: CC.redL, color: CC.red, borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>⚠️ 上次更新遇到網路錯誤（{updates.lastCheck.time}）。請稍後重試。</div>}
-      {!isUpdating && updates.lastCheck && !updates.lastCheck.error && <div style={{ background: CC.grnL, color: CC.grn, borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>✓ 上次更新：{updates.lastCheck.time}（{updates.lastCheck.label}）</div>}
-      {!isUpdating && !updates.lastCheck && <div style={{ background: "#F5F5F4", color: "#aaa", borderRadius: 10, padding: "11px 14px", fontSize: 13, marginBottom: 8 }}>尚未執行任何更新。到期會自動執行，或點下方按鈕手動觸發。</div>}
-      {[...CHECKPOINTS].reverse().map(cp => updates[cp.key] && (
-        <div key={cp.key} style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: ".4px" }}>{cp.icon} {cp.label}・{updates[cp.key].time}</div>
-            <button onClick={() => fetchAndAnalyze(cp.label + " 重新整理")} disabled={isUpdating} style={{ background: CC.acc, color: "#fff", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 500, cursor: "pointer", opacity: isUpdating ? .5 : 1 }}>重新整理</button>
-          </div>
-          <div style={{ fontSize: 13, color: "#333", lineHeight: 1.75, whiteSpace: "pre-wrap" }}>{updates[cp.key].result}</div>
-        </div>
-      ))}
-      {updates.manual && (
-        <div style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>🔄 手動更新・{updates.manual.time}</div>
-          <div style={{ fontSize: 13, color: "#333", lineHeight: 1.75, whiteSpace: "pre-wrap" }}>{updates.manual.result}</div>
-        </div>
-      )}
-      <button onClick={() => fetchAndAnalyze("手動更新")} disabled={isUpdating} style={{ width: "100%", background: CC.acc, color: "#fff", border: "none", borderRadius: 10, padding: 11, fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: isUpdating ? .6 : 1, marginTop: 4 }}>
-        {isUpdating ? "分析中..." : "立即執行更新 →"}
-      </button>
-    </div>
-  );
-
-  // ── Notes View ─────────────────────────────────────────────────────────────
-  const NotesView = () => {
-    const idx       = buildIdx();
-    const noteKeys  = Object.keys(notes);
-    const mediaKeys = Object.keys(media);
-    const allKeys   = [...new Set([...noteKeys, ...mediaKeys])];
-    return (
-      <div style={{ padding: "8px 10px 16px" }}>
-        <LoginBanner />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
-          <div style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px", textAlign: "center" }}>
-            <div style={{ fontSize: 26, fontWeight: 600, color: CC.acc }}>{noteKeys.length}</div>
-            <div style={{ fontSize: 11, color: CC.muted, marginTop: 1 }}>則文字筆記</div>
-          </div>
-          <div style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px", textAlign: "center" }}>
-            <div style={{ fontSize: 26, fontWeight: 600, color: CC.teal }}>{Object.values(media).reduce((a, m) => a + (m.driveLinks?.length || 0) + (m.videoLinks?.length || 0), 0)}</div>
-            <div style={{ fontSize: 11, color: CC.muted, marginTop: 1 }}>個媒體連結</div>
-          </div>
-        </div>
-        {!allKeys.length ? (
-          <div style={{ textAlign: "center", padding: "36px 12px", color: "#bbb" }}>
-            <div style={{ fontSize: 28, marginBottom: 8 }}>📭</div>
-            <div style={{ fontSize: 13 }}>還沒有任何筆記或媒體連結</div>
-          </div>
-        ) : allKeys.map(id => {
-          const info = idx[id] || { title: id, day: "", time: "" };
-          const med  = media[id] || {};
-          return (
-            <div key={id} style={{ background: "#fff", border: CC.border, borderLeft: notes[id] ? "3px solid #F59E0B" : `3px solid ${CC.teal}`, borderRadius: "0 10px 10px 0", padding: "10px 12px", marginBottom: 8 }}>
-              <div style={{ fontSize: 10, color: "#bbb", marginBottom: 2 }}>{info.day}・{info.time}</div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: notes[id] ? 6 : 4 }}>{info.title}</div>
-              {notes[id] && <div style={{ fontSize: 12, color: "#555", lineHeight: 1.55, whiteSpace: "pre-wrap", marginBottom: (med.driveLinks?.length || med.videoLinks?.length) ? 8 : 0 }}>{notes[id]}</div>}
-              {(med.driveLinks || []).map((lk, i) => <a key={i} href={lk.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: CC.accL, color: CC.acc, borderRadius: 6, padding: "3px 9px", fontSize: 11, fontWeight: 500, textDecoration: "none", margin: "2px" }}>📷 {lk.label}</a>)}
-              {(med.videoLinks || []).map((vl, i) => <a key={i} href={vl.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: CC.tealL, color: CC.teal, borderRadius: 6, padding: "3px 9px", fontSize: 11, fontWeight: 500, textDecoration: "none", margin: "2px" }}>▶ {vl.label}</a>)}
-            </div>
-          );
-        })}
-        <div style={{ marginTop: 14, background: "linear-gradient(135deg,#1E1B4B,#4338CA)", borderRadius: 12, padding: "16px 18px" }}>
-          <div style={{ color: "#fff", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>📄 匯出會議記錄</div>
-          <div style={{ color: "rgba(255,255,255,.65)", fontSize: 12, marginBottom: 12 }}>HTML 可離線儲存列印；Google Doc 可在線編輯與分享</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <button onClick={doExportHTML} style={{ background: "rgba(255,255,255,.2)", color: "#fff", border: "1px solid rgba(255,255,255,.35)", borderRadius: 8, padding: "9px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-              {exportDone ? "✓ 下載中..." : "↓ 下載 HTML 版本（可列印）"}
-            </button>
-            <button onClick={doExportGoogleDoc} disabled={!accessToken || exportingDoc}
-              style={{ background: accessToken ? "#fff" : "rgba(255,255,255,.15)", color: accessToken ? CC.acc : "rgba(255,255,255,.4)", border: "none", borderRadius: 8, padding: "9px 0", fontSize: 13, fontWeight: 700, cursor: accessToken ? "pointer" : "not-allowed" }}>
-              {exportingDoc ? "⏳ 建立 Google Doc 中..." : accessToken ? "↗ 匯出為 Google Doc（可編輯）" : "請先登入 Google 帳號"}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ── Info View ──────────────────────────────────────────────────────────────
-  const InfoView = () => (
-    <div style={{ padding: "8px 10px 16px" }}>
-      <LoginBanner />
-      {[
-        {
-          title: "📍 地點",
-          body: <><div style={{ fontSize: 13, fontWeight: 600 }}>{C_CFG.venue?.split("，")[0]}</div><div style={{ fontSize: 12, color: CC.muted, margin: "2px 0 5px" }}>{C_CFG.venue?.split("，")[1] || ""}</div><a href={C_CFG.mapsUrl} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 12 }}>Google 地圖 →</a></>
-        },
-        {
-          title: "🕐 報到時間",
-          body: <div style={{ fontSize: 12, color: CC.muted, lineHeight: 2.1 }}>{C_CFG.registrationTimes.map((t, i) => <span key={i}>{t}<br/></span>)}</div>
-        },
-        {
-          title: "🔗 重要連結",
-          body: <>{C_CFG.links.map(([l, h]) => <a key={l} href={h} target="_blank" rel="noreferrer" style={{ color: CC.acc, fontSize: 13, display: "block", marginBottom: 5 }}>{l} →</a>)}</>
-        },
-      ].map(({ title, body }) => (
-        <div key={title} style={{ background: "#fff", border: CC.border, borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "#bbb", marginBottom: 7 }}>{title}</div>
-          {body}
-        </div>
-      ))}
-      <div style={{ background: CC.ambL, border: "1px solid #FCD34D", borderRadius: 10, padding: "12px 14px" }}>
-        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: CC.amb, marginBottom: 7 }}>📌 個人備忘</div>
-        {C_CFG.personalReminders.map(s => (
-          <div key={s} style={{ fontSize: 12, color: CC.amb, lineHeight: 2, paddingLeft: 13, position: "relative" }}>
-            <span style={{ position: "absolute", left: 0 }}>•</span>{s}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  // ── Layout ─────────────────────────────────────────────────────────────────
-  const dayEntries = Object.entries(DAYS);
-  const filters    = [["all","全部"],["star","⭐ 推薦"],["prenatal","🧬 產前"],["cyto","🔬 細胞遺傳"],["notes","📝 有記錄"]];
-  const filterColor = { all: CC.acc, star: CC.amb, prenatal: CC.teal, cyto: CC.blue, notes: "#B45309" };
-  const navItems   = [["schedule","📅","議程"],["update","🔄","更新"],["notes","📝","筆記"],["info","ℹ️","資訊"]];
+  const titles = { home:"會議助理", sched:"議程", notes:"我的筆記", badge:"報到資訊" };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100svh", maxWidth: 700, margin: "0 auto", fontFamily: "-apple-system,'Helvetica Neue',sans-serif", fontSize: 14, color: "#1C1917", background: "#FAFAF8" }}>
+    <div style={{height:"100%",display:"flex",flexDirection:"column",background:T.paper,fontFamily:FONT_SANS,color:T.ink,position:"relative",overflow:"hidden"}}>
 
-      <div style={{ background: "linear-gradient(135deg,#1E1B4B 0%,#4338CA 100%)", color: "#fff", padding: "12px 14px 0", flexShrink: 0, paddingTop: "max(env(safe-area-inset-top,0px), 12px)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-.3px" }}>
-              {C_CFG.name}
-              {accessToken && <span style={{ fontSize: 10, background: "rgba(255,255,255,.2)", padding: "1px 7px", borderRadius: 10, marginLeft: 7, verticalAlign: "middle" }}>
-                {syncStatus === "syncing" ? "⏳" : "☁"} Drive
-              </span>}
-            </div>
-            <div style={{ fontSize: 11, opacity: .6, marginTop: 1 }}>
-              {C_CFG.location.split("，")[0]}・{C_CFG.dates}・{daysLeft > 0 ? `距今 ${daysLeft} 天` : "進行中"}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 5 }}>
-            {!accessToken && <button onClick={() => tokenClient?.requestAccessToken()} disabled={!tokenClient} style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", borderRadius: 20, padding: "5px 11px", fontSize: 11, fontWeight: 500, cursor: tokenClient ? "pointer" : "not-allowed" }}>🔑 登入</button>}
-            <button onClick={() => { fetchAndAnalyze("手動更新"); setView("update"); }} style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", borderRadius: 20, padding: "5px 11px", fontSize: 11, fontWeight: 500, cursor: "pointer" }}>↻ 更新</button>
-            <button onClick={doExportHTML} style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", borderRadius: 20, padding: "5px 11px", fontSize: 11, fontWeight: 500, cursor: "pointer" }}>{exportDone ? "✓" : "↓ 匯出"}</button>
-          </div>
-        </div>
-        {curView === "schedule" && (
-          <div style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none" }}>
-            {dayEntries.map(([d, label]) => (
-              <button key={d} onClick={() => setCurDay(d)} style={{ flexShrink: 0, padding: "8px 13px", fontSize: 12, fontWeight: 500, color: curDay === d ? "#fff" : "rgba(255,255,255,.45)", cursor: "pointer", borderBottom: curDay === d ? "2.5px solid #fff" : "2.5px solid transparent", borderTop: "none", borderLeft: "none", borderRight: "none", background: "none", whiteSpace: "nowrap" }}>{label}</button>
-            ))}
-          </div>
-        )}
+      {/* header */}
+      <div style={{paddingTop:"max(16px, env(safe-area-inset-top, 44px))",paddingBottom:10,paddingLeft:16,paddingRight:16,background:T.paper,display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexShrink:0,position:"relative",zIndex:6}}>
+        <div style={{fontFamily:FONT_SERIF,fontSize:21,fontWeight:700,color:T.ink,letterSpacing:".3px"}}>{titles[tab]}</div>
+        <button onClick={()=>setTab("badge")} style={{display:"inline-flex",alignItems:"center",gap:5,border:"none",cursor:"pointer",background:T.primaryTint,color:T.primary,borderRadius:999,padding:"5px 11px",fontSize:12,fontWeight:700,fontFamily:FONT_SANS,whiteSpace:"nowrap",flexShrink:0}}>
+          <span style={{width:6,height:6,borderRadius:"50%",background:T.primary}}/>
+          開課倒數 {daysLeft} 天
+        </button>
       </div>
 
-      {curView === "schedule" && (
-        <div style={{ background: "#fff", borderBottom: CC.border, padding: "7px 12px", display: "flex", gap: 5, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 }}>
-          {filters.map(([f, label]) => {
-            const active = curFilter === f;
-            const fc     = filterColor[f];
-            return <button key={f} onClick={() => setFilter(f)} style={{ flexShrink: 0, padding: "4px 10px", border: active ? `1px solid ${fc}` : CC.border, borderRadius: 20, fontSize: 11, cursor: "pointer", background: active ? fc : "none", color: active ? "#fff" : "#999", fontWeight: 500 }}>{label}</button>;
-          })}
+      {/* scroll area */}
+      <div ref={scrollRef} style={{flex:1,overflowY:"auto",overflowX:"hidden",WebkitOverflowScrolling:"touch"}}>
+        <div style={{paddingBottom:8}}>
+          {tab==="home"  && <HomeScreen S={S}/>}
+          {tab==="sched" && <ScheduleScreen S={S}/>}
+          {tab==="notes" && <NotesScreen S={S}/>}
+          {tab==="badge" && <BadgeScreen S={S}/>}
+        </div>
+      </div>
+
+      {/* bottom nav */}
+      <div style={{flexShrink:0,display:"flex",paddingTop:8,paddingBottom:"max(20px, env(safe-area-inset-bottom, 0px))",background:"rgba(255,255,255,.92)",backdropFilter:"blur(16px) saturate(180%)",WebkitBackdropFilter:"blur(16px) saturate(180%)",borderTop:`1px solid ${T.hair}`,position:"relative",zIndex:6}}>
+        {[["home","home","首頁"],["sched","calendar","議程"],["notes","note","筆記"],["badge","badge","報到"]].map(([k,icon,label])=>{
+          const on=tab===k;
+          const badge=k==="notes"?notesBadge:0;
+          return (
+            <button key={k} onClick={()=>setTab(k)} style={{flex:1,border:"none",background:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"2px 0",fontFamily:FONT_SANS,position:"relative"}}>
+              <div style={{position:"relative"}}>
+                <Icon name={icon} size={23} color={on?T.primary:T.faint} stroke={on?2:1.7}/>
+                {badge>0 && <span style={{position:"absolute",top:-3,right:-8,minWidth:15,height:15,borderRadius:999,background:T.gold,color:"#fff",fontSize:9.5,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>{badge}</span>}
+              </div>
+              <span style={{fontSize:10.5,fontWeight:on?700:500,color:on?T.primary:T.muted}}>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* toast */}
+      {toast && (
+        <div style={{position:"absolute",left:0,right:0,bottom:96,display:"flex",justifyContent:"center",zIndex:40,pointerEvents:"none"}}>
+          <div style={{background:T.ink,color:T.paper,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:999,boxShadow:"0 12px 30px -10px rgba(0,0,0,.4)",display:"inline-flex",alignItems:"center",gap:7}}>
+            <Icon name="check" size={14} color={T.paper} stroke={2.4}/>{toast}
+          </div>
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", background: "#FAFAF8" }}>
-        {curView === "schedule" && <ScheduleView />}
-        {curView === "update"   && <UpdateView />}
-        {curView === "notes"    && <NotesView />}
-        {curView === "info"     && <InfoView />}
-      </div>
-
-      <div style={{ background: "#fff", borderTop: CC.border, display: "flex", flexShrink: 0, paddingBottom: "env(safe-area-inset-bottom,0px)" }}>
-        {navItems.map(([v, icon, label]) => (
-          <button key={v} onClick={() => { setView(v); if (v === "update") setHasDot(false); }} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "7px 4px 9px", cursor: "pointer", fontSize: 10, fontWeight: 500, color: curView === v ? CC.acc : "#bbb", border: "none", background: "none", gap: 2, position: "relative" }}>
-            <span style={{ fontSize: 18 }}>{icon}</span>{label}
-            {v === "update" && hasDot && <span style={{ position: "absolute", top: 6, right: "calc(50% - 14px)", width: 7, height: 7, borderRadius: "50%", background: "#EF4444" }} />}
-          </button>
-        ))}
-      </div>
+      {/* 會議切換 sheet */}
+      {showSwitcher && (
+        <ConferenceSwitcher
+          allConfigs={allConfigs}
+          activeKey={activeKey}
+          onSelect={switchConference}
+          onClose={()=>setShowSwitcher(false)}
+        />
+      )}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
